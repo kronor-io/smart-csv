@@ -1,0 +1,8 @@
+dist-newstyle/
+.direnv/
+result
+*.stats
+result
+.claude/
+.cabal-fmt-*
+.pre-commit-config.yaml

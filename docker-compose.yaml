@@ -1,0 +1,84 @@
+services:
+  postgres:
+    build:
+      context: docker/postgres
+    command: postgres -c track_commit_timestamp=on
+    environment:
+      POSTGRES_DB: smart_csv
+      POSTGRES_USER: smart_csv
+      POSTGRES_PASSWORD: smart_csv
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smart_csv"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  hasura:
+    image: hasura/graphql-engine:v2.44.0
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      HASURA_GRAPHQL_DATABASE_URL: postgres://smart_csv:smart_csv@postgres:5432/smart_csv
+      HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
+      HASURA_GRAPHQL_ADMIN_SECRET: admin
+      HASURA_GRAPHQL_JWT_SECRET: '{ "type": "HS256", "key": "CluqFpAjf9eVcy1gSnrcZWOIKiGBoLl651D7TE0l4Dc=" }'
+      HASURA_GRAPHQL_UNAUTHORIZED_ROLE: anonymous
+      HASURA_GRAPHQL_EXPERIMENTAL_FEATURES: naming_convention
+      HASURA_GRAPHQL_DEFAULT_NAMING_CONVENTION: graphql-default
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/healthz || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: smartcsvak
+      MINIO_ROOT_PASSWORD: smartcsvsk
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+
+  minio-init:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint: >
+      /bin/sh -c "
+      sleep 3;
+      mc alias set local http://minio:9000 smartcsvak smartcsvsk;
+      mc mb --ignore-existing local/smart-csv-reports;
+      exit 0;
+      "
+
+  mailhog:
+    image: mailhog/mailhog
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # Web UI
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+      - "16686:16686" # Jaeger UI
+
+volumes:
+  pgdata:
+  miniodata:

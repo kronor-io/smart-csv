@@ -1,0 +1,14 @@
+%syntax-version=1.0.0
+%project=smart-csv
+
+schemas 2026-03-19T12:00:00Z Kronor Team <dev@kronor.io> # Create smart_csv and job_queue schemas
+extensions 2026-03-19T12:00:01Z Kronor Team <dev@kronor.io> # Required extensions and custom domains
+reference_tables 2026-03-19T12:00:02Z Kronor Team <dev@kronor.io> # Reference/lookup tables
+job_queue_tables 2026-03-19T12:00:03Z Kronor Team <dev@kronor.io> # Job queue infrastructure tables
+job_queue_functions 2026-03-19T12:00:04Z Kronor Team <dev@kronor.io> # Job queue functions
+job_queue_triggers 2026-03-19T12:00:05Z Kronor Team <dev@kronor.io> # Job queue notification triggers
+smart_csv_tables 2026-03-19T12:00:06Z Kronor Team <dev@kronor.io> # Core smart_csv tables
+smart_csv_statechart 2026-03-19T12:00:07Z Kronor Team <dev@kronor.io> # csv_report_flow state machine
+smart_csv_functions 2026-03-19T12:00:08Z Kronor Team <dev@kronor.io> # Smart CSV functions and job schema
+smart_csv_triggers 2026-03-19T12:00:09Z Kronor Team <dev@kronor.io> # Smart CSV triggers
+column_config 2026-03-20T12:00:00Z Kronor Team <dev@kronor.io> # Column config presets and per-request overrides

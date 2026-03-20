@@ -1,0 +1,221 @@
+cabal-version:      2.2
+name:               smart-csv-runner
+version:            0.1.0.0
+description:        Standalone worker runtime for smart CSV generation
+homepage:           https://github.com/kronor-io/smart-csv#readme
+bug-reports:        https://github.com/kronor-io/smart-csv/issues
+author:             Kronor Team
+maintainer:         dev@kronor.io
+copyright:          2026 Kronor
+license:            BSD-3-Clause
+license-file:       LICENSE
+build-type:         Simple
+extra-source-files: README.md
+
+source-repository head
+  type:     git
+  location: https://github.com/kronor-io/smart-csv
+
+flag lint
+  description: lint
+  manual:      True
+  default:     False
+
+flag prod
+  description: prod
+  manual:      True
+  default:     False
+
+common common-component-settings
+  if flag(prod)
+    ghc-options: -O2
+
+  else
+    ghc-options: -O0
+
+  if flag(lint)
+    ghc-options: -Werror
+
+  default-extensions:
+      RecordWildCards
+    , ScopedTypeVariables
+    , TemplateHaskell
+    , ApplicativeDo
+    , BlockArguments
+    , DataKinds
+    , DeepSubsumption
+    , DefaultSignatures
+    , DeriveAnyClass
+    , DerivingStrategies
+    , DerivingVia
+    , DuplicateRecordFields
+    , FunctionalDependencies
+    , GADTs
+    , LambdaCase
+    , MultiWayIf
+    , NoImplicitPrelude
+    , OverloadedRecordDot
+    , OverloadedStrings
+    , PackageImports
+    , PartialTypeSignatures
+    , PatternSynonyms
+    , QuasiQuotes
+    , StrictData
+    , TypeFamilies
+    , ViewPatterns
+
+common common-component-settings-ghc2021
+  import: common-component-settings
+  default-language: GHC2021
+
+common common-component-settings-ghc2024
+  import: common-component-settings
+  default-language: GHC2024
+
+library
+  import: common-component-settings-ghc2021
+  exposed-modules:
+    JobSchemas.GenerateSettlementCsv
+    JobSchemas.SmartGraphqlCsvGenerate
+    Kronor.CircuitBreaker
+    Kronor.Db
+    Kronor.Db.Error.Common
+    Kronor.Db.Models.Shard
+    Kronor.Db.Types.Bigint
+    Kronor.Http
+    Kronor.Logger
+    Kronor.Tracer
+    SmartCsvApi.Auth
+    SmartCsvApi.Db.Statements
+    SmartCsvApi.Env
+    SmartCsvApi.Handler.SmartGraphqlCsvGenerator
+    SmartCsvApi.RestServer
+    SmartCsvApi.Types.SmartGraphqlCsvGenerator
+    SmartCsvApi.Validation.SmartGraphqlCsvGenerator
+    SmartCsvRunner.AWS
+    SmartCsvRunner.AWS.S3
+    SmartCsvRunner.AWS.Types
+    SmartCsvRunner.Cli
+    SmartCsvRunner.CsvGeneration.Generate
+    SmartCsvRunner.Dequeuer
+    SmartCsvRunner.Dispatcher
+    SmartCsvRunner.Env
+    SmartCsvRunner.Job
+    SmartCsvRunner.Job.Payload
+    SmartCsvRunner.Job.SmartCsvEnv
+    SmartCsvRunner.Job.Type
+    SmartCsvRunner.JobHandlers.Email
+    SmartCsvRunner.JobHandlers.SmartGenerateCsv
+    SmartCsvRunner.MultipartUpload
+    SmartCsvRunner.ReportLink
+    SmartCsvRunner.ThreadManager
+
+  other-modules:    Paths_smart_csv_runner
+  hs-source-dirs:   src
+  build-depends:
+      aeson
+    , amazonka
+    , amazonka-s3
+    , amazonka-ses
+    , annotated-exception
+    , base                                  >=4.11     && <10
+    , base64-bytestring
+    , binary
+    , bytestring
+    , cassava
+    , co-log-json
+    , crypton
+    , containers
+    , jose
+    , fastsum
+    , hasql
+    , hasql-pool
+    , hasql-th
+    , hasql-transaction
+    , hs-opentelemetry-api
+    , hs-opentelemetry-exporter-otlp
+    , hs-opentelemetry-instrumentation-wai
+    , hs-opentelemetry-otlp
+    , hs-opentelemetry-propagator-w3c
+    , hs-opentelemetry-sdk
+    , http-client
+    , http-client-tls
+    , immortal
+    , iso8601-time
+    , smart-csv
+    , memory
+    , lens
+    , lens-aeson
+    , mime-mail
+    , modern-uri
+    , morpheus-graphql-core
+    , mtl
+    , network
+    , opt-env-conf
+    , postgresql-libpq
+    , postgresql-libpq-notify
+    , req
+    , rio                                   >=0.1.12.0
+    , rio-orphans
+    , servant-server
+    , smtp-mail
+    , streamly
+    , streamly-core
+    , string-interpolate
+    , text
+    , time
+    , unliftio
+    , unordered-containers
+    , uuid
+    , vector
+    , wai
+    , warp
+
+executable smart-csv-runner
+  import: common-component-settings-ghc2024
+  ghc-options:
+    -threaded -rtsopts "-with-rtsopts=-N -T -A64m" -main-is Main.main
+
+  main-is:          Main.hs
+  hs-source-dirs:   app
+  other-modules:    Paths_smart_csv_runner
+  build-depends:
+      base
+    , rio
+    , smart-csv-runner
+
+test-suite smart-csv-runner-test
+  import: common-component-settings-ghc2024
+  type:             exitcode-stdio-1.0
+  ghc-options:      -threaded
+  main-is:          Test/SmartCsvRunner.hs
+  hs-source-dirs:   test
+  other-modules:
+    Paths_smart_csv_runner
+    Test.SmartCsvRunner.Integration
+  build-depends:
+      aeson
+    , base
+    , base64-bytestring
+    , bytestring
+    , cassava
+    , containers
+    , hasql
+    , hasql-pool
+    , jose
+    , hasql-th
+    , http-client
+    , http-conduit
+    , http-types
+    , lens-aeson
+    , memory
+    , rio
+    , smart-csv-runner
+    , string-interpolate
+    , tasty
+    , tasty-hunit
+    , text
+    , time
+    , vector
+    , wai
+    , wai-extra

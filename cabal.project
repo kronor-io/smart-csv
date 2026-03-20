@@ -1,0 +1,112 @@
+optimization: False
+jobs: $ncpus
+semaphore: True
+
+packages:
+  smart-csv
+  smart-csv-runner
+
+package postgresql-libpq
+  flags: +use-pkg-config
+
+package amazonka
+  ghc-options:
+    -XDuplicateRecordFields
+
+package amazonka-core
+  ghc-options:
+    -XDuplicateRecordFields
+
+package amazonka-sso
+  ghc-options:
+    -XDuplicateRecordFields
+
+package amazonka-sts
+  ghc-options:
+    -XDuplicateRecordFields
+
+package amazonka-s3
+  ghc-options:
+    -XDuplicateRecordFields
+
+package amazonka-ses
+  ghc-options:
+    -XDuplicateRecordFields
+
+package HsOpenSSL
+  ghc-options:
+    -optc=-Wno-discarded-qualifiers -optc=-Wno-deprecated-declarations
+    -optc=-Wno-incompatible-pointer-types
+
+program-options
+  ghc-options:
+    -Wall
+    -Wcompat
+    -Widentities
+    -Wincomplete-record-updates
+    -Wincomplete-uni-patterns
+    -Wpartial-fields
+    -Wredundant-constraints
+    -Wunused-packages
+    -freverse-errors
+    -fhide-source-paths
+    -fno-break-points
+    -fbyte-code-and-object-code
+    +RTS -A64m -N -RTS
+    -Wno-unticked-promoted-constructors
+    -Werror
+    -Wno-error=unused-packages
+    -Wno-error=unused-record-wildcards
+    -Wno-error=partial-fields
+    -Wno-error=unused-imports
+    -Wno-error=x-partial
+
+repository github-kronor-haskell-packages
+  url: https://kronor-io.github.io/kronor-haskell-packages
+  secure: True
+  root-keys:
+    64307ca6c1cee780dd01e5e11193ba606b21fe1dd6a9102b838daff0c747eded
+    85a0bbddb3afe87449114e7b0622c9c80bd9164b5228dbc7db9fe66f3043f540
+    f344d0824b70101babfdea1e470b7388f6b8fc51b41186a627e98c71068a838c
+
+constraints:
+  morpheus-graphql-core == 0.27.3.0.*,
+  hasql-pool == 1.3.0.3.0.*,
+  hasql-transaction == 1.2.1.0.*,
+  hasql-th == 0.4.0.23.*,
+  fastsum == 0.2.0.0.0.*,
+  hs-opentelemetry-api == 0.2.0.0.0.0.0.0.1,
+  hs-opentelemetry-otlp == 0.1.0.0.0.0.0.0.1,
+  hs-opentelemetry-exporter-otlp == 0.1.0.0.0.0.0.0.1,
+  aeson >= 2.2,
+  transformers >= 0.6,
+  streamly-process == 0.3.1.0.0.0.0.1,
+  crypton >= 1.0.4,
+  cryptonite < 0.0.0,
+  zlib == 0.7.1.0,
+  wide-word == 0.1.7.1,
+  unix == 2.8.7.0,
+  unix +os-string,
+
+allow-newer:
+  *:bytestring,
+  *:text,
+  *:base,
+  *:ghc-prim,
+  *:deepseq,
+  *:random,
+  *:template-haskell,
+  *:th-abstraction,
+  *:socks,
+  *:primitive,
+  *:connection,
+  *:aeson,
+  *:vector,
+  *:postgresql-libpq,
+  *:streamly,
+  *:streamly-core,
+  hasql-transaction:random,
+  streamly-process:unix,
+  morpheus-graphql-core:transformers,
+
+index-state: hackage.haskell.org 2025-11-24T20:42:33Z

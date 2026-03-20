@@ -1,0 +1,4 @@
+indentation: 4
+haddock-style: single-line
+newlines-between-decls: 2
+single-constraint-parens: never

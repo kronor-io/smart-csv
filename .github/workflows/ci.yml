@@ -1,0 +1,133 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  nix-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      platforms: ${{ steps.set-platforms.outputs.platforms }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - uses: cachix/cachix-action@v16
+        with:
+          name: kronor-open
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+      - id: set-matrix
+        name: Generate Nix Matrix
+        run: |
+          set -Eeu
+          matrix="$(nix eval --json '.#githubActions.matrix')"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+      - id: set-platforms
+        name: Extract unique platforms
+        run: |
+          set -Eeu
+          platforms="$(echo '${{ steps.set-matrix.outputs.matrix }}' | jq -c '{include: [.include | group_by(.system)[] | first | {system, os}]}')"
+          echo "platforms=$platforms" >> "$GITHUB_OUTPUT"
+
+  nix-build:
+    name: ${{ matrix.name }} (${{ matrix.system }})
+    needs: nix-matrix
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix: ${{ fromJSON(needs.nix-matrix.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - uses: cachix/cachix-action@v16
+        with:
+          name: kronor-open
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+      - name: Build
+        run: nix build -L '.#${{ matrix.attr }}'
+
+  test:
+    name: Test
+    needs: nix-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - uses: cachix/cachix-action@v16
+        with:
+          name: kronor-open
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+      - name: Start infrastructure
+        run: docker compose up -d --wait
+      - name: Set up database
+        run: nix develop -c bash _dev/setup-db.sh
+      - name: Start service
+        run: |
+          nix develop -c bash _dev/smart-csv-runner.sh &
+          sleep 5
+        env:
+          DB_HOST: localhost
+          DB_PORT: "5432"
+          DB_LISTENER_USER: smart_csv
+          DB_LISTENER_PASSWORD: smart_csv
+          DB_LISTENER_DATABASE: smart_csv
+          DB_DEQUEUER_USER: smart_csv
+          DB_DEQUEUER_PASSWORD: smart_csv
+          DB_DEQUEUER_DATABASE: smart_csv
+          DB_WORKER_USER: smart_csv
+          DB_WORKER_PASSWORD: smart_csv
+          DB_WORKER_DATABASE: smart_csv
+          DB_REPLICA_CSV_USER: smart_csv
+          DB_REPLICA_CSV_PASSWORD: smart_csv
+          DB_REPLICA_CSV_DATABASE: smart_csv
+          API_PORT: "8000"
+          GRAPHQL_URL: http://localhost:8080/v1/graphql
+          PORTAL_URL: http://localhost:3000
+          JWT_SECRET: Q2x1cUZwQWpmOWVWY3kxZ1NucmNaV09JS2lHQm9MbDY1MUQ3VEUwbDREYz0=
+          MAIL_DEV: "True"
+          MAIL_HOST: localhost
+          MAIL_PORT: "1025"
+          AWS_ACCESS_KEY_ID: smartcsvak
+          AWS_SECRET_ACCESS_KEY: smartcsvsk
+          KRONOR_AWS_FROM: env
+          KRONOR_S3_BUCKET: smart-csv-reports
+          KRONOR_SIGNED_URL_EXPIRY_TIME_IN_SECONDS: "3600"
+          KRONOR_TEST_S3_ENDPOINT_HOSTNAME: localhost
+          KRONOR_TEST_S3_ENDPOINT_PORT: "9000"
+          OTEL_EXPORTER_OTLP_ENDPOINT: http://localhost:4318
+          OTEL_SERVICE_NAME: smart-csv-runner
+      - name: Run all tests
+        run: nix develop -c cabal test all
+
+  release:
+    name: Release (${{ matrix.system }})
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [nix-matrix, nix-build, test]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      matrix: ${{ fromJSON(needs.nix-matrix.outputs.platforms) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - uses: cachix/cachix-action@v16
+        with:
+          name: kronor-open
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+      - name: Build release binary
+        run: nix build -L '.#default'
+      - name: Package artifact
+        run: |
+          cp result/bin/smart-csv-runner smart-csv-runner-${{ matrix.system }}
+      - name: Upload release artifact
+        uses: softprops/action-gh-release@v2
+        with:
+          files: smart-csv-runner-${{ matrix.system }}
