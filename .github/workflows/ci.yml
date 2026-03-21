@@ -64,6 +64,10 @@ jobs:
         with:
           name: kronor-open
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+      - name: Disable byte-code-and-object-code
+        run: |
+          echo "program-options" >> cabal.project.local
+          echo "  ghc-options: -fno-byte-code-and-object-code" >> cabal.project.local
       - name: Start infrastructure
         run: docker compose up -d --wait
       - name: Set up database
