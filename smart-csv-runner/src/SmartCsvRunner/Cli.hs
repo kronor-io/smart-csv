@@ -54,14 +54,15 @@ buildS3Config :: Aws.Env -> IO (S3Config, Aws.Env)
 buildS3Config awsEnv = do
   bucket <- maybe "kronor-local" fromString <$> Env.lookupEnv "KRONOR_S3_BUCKET"
   expiry <- fromMaybe 3600 . (>>= readMaybe) <$> Env.lookupEnv "KRONOR_SIGNED_URL_EXPIRY_TIME_IN_SECONDS"
-  -- Support local minio endpoint override for testing
+  -- Support custom S3 endpoint override for testing (minio, GCS, etc.)
   mS3Host <- Env.lookupEnv "KRONOR_TEST_S3_ENDPOINT_HOSTNAME"
   mS3Port <- Env.lookupEnv "KRONOR_TEST_S3_ENDPOINT_PORT"
+  useTls <- maybe False (\v -> v == "true" || v == "1") <$> Env.lookupEnv "KRONOR_TEST_S3_ENDPOINT_TLS"
   let awsEnv' = case (mS3Host, mS3Port >>= readMaybe) of
         (Just host, Just port) ->
           AwsSdk.configureService
             ( AwsS3.defaultService {AwsSdk.s3AddressingStyle = AwsSdk.S3AddressingStylePath}
-                & AwsSdk.setEndpoint False (BS.toStrict (fromString host)) port
+                & AwsSdk.setEndpoint useTls (BS.toStrict (fromString host)) port
             )
             awsEnv
         _ -> awsEnv
