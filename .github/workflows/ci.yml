@@ -18,9 +18,9 @@ jobs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
       platforms: ${{ steps.set-platforms.outputs.platforms }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: cachix/install-nix-action@v31
-      - uses: cachix/cachix-action@v16
+      - uses: cachix/cachix-action@v17
         with:
           name: kronor-open
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
@@ -44,9 +44,9 @@ jobs:
     strategy:
       matrix: ${{ fromJSON(needs.nix-matrix.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: cachix/install-nix-action@v31
-      - uses: cachix/cachix-action@v16
+      - uses: cachix/cachix-action@v17
         with:
           name: kronor-open
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
@@ -58,9 +58,9 @@ jobs:
     needs: nix-build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: cachix/install-nix-action@v31
-      - uses: cachix/cachix-action@v16
+      - uses: cachix/cachix-action@v17
         with:
           name: kronor-open
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
@@ -131,16 +131,16 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: cachix/install-nix-action@v31
-      - uses: cachix/cachix-action@v16
+      - uses: cachix/cachix-action@v17
         with:
           name: kronor-open
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
       - name: Build Docker image
         run: nix build -L '.#dockerImage'
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
