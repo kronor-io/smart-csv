@@ -175,7 +175,7 @@
           ] ++ cabalProjectModules;
 
           inherit compiler-nix-name;
-          cabalProjectFreeze = builtins.readFile ./cabal.project.freeze
+          cabalProjectFreeze = builtins.readFile ./cabal.project.freeze;
           supportHpack = false;
         };
 
