@@ -175,7 +175,7 @@
           ] ++ cabalProjectModules;
 
           inherit compiler-nix-name;
-          cabalProjectFreeze = builtins.readFile ./cabal.project.freeze;
+          cabalProjectFreeze = builtins.readFile ./cabal.project.freeze
           supportHpack = false;
         };
 
@@ -213,7 +213,7 @@
                 imageName = "gcr.io/distroless/static-debian13";
                 imageDigest =
                   "sha256:28efbe90d0b2f2a3ee465cc5b44f3f2cf5533514cf4d51447a977a5dc8e526d0";
-                sha256 = "sha256-pfoj5kJrmWrwSKJG3kgD5PsJoBxtInil4GnT1nilq1g=";
+                sha256 = "sha256-Hk7QTotHKMieKinbchIzU2lNivZMPnDILHv6sA9zmoo=";
                 finalImageName = "gcr.io/distroless/static-debian13";
                 finalImageTag = "latest";
               };
