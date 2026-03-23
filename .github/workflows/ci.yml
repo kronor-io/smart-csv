@@ -123,14 +123,13 @@ jobs:
         run: nix develop -c cabal test all
 
   release:
-    name: Release (${{ matrix.system }})
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [nix-matrix, nix-build, test]
-    runs-on: ${{ matrix.os }}
+    name: Release
+    # TODO: restore tag condition: if: startsWith(github.ref, 'refs/tags/v')
+    needs: [nix-build, test]
+    runs-on: ubuntu-latest
     permissions:
-      contents: write
-    strategy:
-      matrix: ${{ fromJSON(needs.nix-matrix.outputs.platforms) }}
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
       - uses: cachix/install-nix-action@v31
@@ -138,12 +137,24 @@ jobs:
         with:
           name: kronor-open
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
-      - name: Build release binary
-        run: nix build -L '.#default'
-      - name: Package artifact
+      - name: Build Docker image
+        run: nix build -L '.#dockerImage'
+      - name: Verify Docker image loads
         run: |
-          cp result/bin/smart-csv-runner smart-csv-runner-${{ matrix.system }}
-      - name: Upload release artifact
-        uses: softprops/action-gh-release@v2
-        with:
-          files: smart-csv-runner-${{ matrix.system }}
+          docker load < result
+          docker images smart-csv-runner
+      # TODO: uncomment when ready to publish
+      # - name: Log in to GHCR
+      #   uses: docker/login-action@v3
+      #   with:
+      #     registry: ghcr.io
+      #     username: ${{ github.actor }}
+      #     password: ${{ secrets.GITHUB_TOKEN }}
+      # - name: Push Docker image
+      #   run: |
+      #     IMAGE=ghcr.io/${{ github.repository }}/smart-csv-runner
+      #     VERSION=${GITHUB_REF_NAME#v}
+      #     docker tag smart-csv-runner:latest "$IMAGE:$VERSION"
+      #     docker tag smart-csv-runner:latest "$IMAGE:latest"
+      #     docker push "$IMAGE:$VERSION"
+      #     docker push "$IMAGE:latest"

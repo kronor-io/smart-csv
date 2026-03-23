@@ -207,6 +207,30 @@
         packages = {
           default = smartCsvProject.smart-csv-runner.components.exes.smart-csv-runner;
           freezeFile = smartCsvProject.plan-nix.freeze;
+          dockerImage =
+            let
+              baseImage = pkgs.dockerTools.pullImage {
+                imageName = "gcr.io/distroless/static-debian13";
+                imageDigest =
+                  "sha256:28efbe90d0b2f2a3ee465cc5b44f3f2cf5533514cf4d51447a977a5dc8e526d0";
+                sha256 = "sha256-pfoj5kJrmWrwSKJG3kgD5PsJoBxtInil4GnT1nilq1g=";
+                finalImageName = "gcr.io/distroless/static-debian13";
+                finalImageTag = "latest";
+              };
+            in
+            pkgs.dockerTools.buildLayeredImage {
+              name = "smart-csv-runner";
+              tag = "latest";
+              fromImage = baseImage;
+              contents = [
+                pkgs.iana-etc
+                pkgs.cacert
+                smartCsvProject.smart-csv-runner.components.exes.smart-csv-runner
+              ];
+              config = {
+                Cmd = [ "/bin/smart-csv-runner" ];
+              };
+            };
         };
         devShells.default = shell;
       }
