@@ -183,6 +183,11 @@
 
           withHoogle = false;
 
+          buildInputs = [
+            pristinePkgs.sqitchPg
+            pristinePkgs.postgresql
+          ];
+
           shellHook = ''
             ${self.checks.${system}.pre-commit-check.shellHook}
           '';

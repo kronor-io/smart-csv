@@ -26,6 +26,10 @@ sqitch deploy "$DB_URL" || true  # allow "nothing to deploy"
 # 3. Deploy smart-csv migrations
 echo "==> Deploying smart-csv migrations"
 cd "$REPO_DIR"
-sqitch deploy "$DB_URL" || true
+sqitch deploy "$DB_URL" || true  # allow "nothing to deploy"
+
+# 4. Verify smart-csv migrations were applied
+echo "==> Verifying smart-csv migrations"
+sqitch verify "$DB_URL"
 
 echo "==> Database setup complete"
