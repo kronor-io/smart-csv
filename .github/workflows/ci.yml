@@ -72,10 +72,22 @@ jobs:
         run: docker compose up -d --wait
       - name: Set up database
         run: nix develop -c bash _dev/setup-db.sh
+      - name: Build service
+        run: nix develop -c cabal build smart-csv-runner
       - name: Start service
         run: |
           nix develop -c bash _dev/smart-csv-runner.sh &
-          sleep 5
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8000/health > /dev/null 2>&1; then
+              echo "Service is up after ${i}s"
+              break
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "Service failed to start within 60s"
+              exit 1
+            fi
+            sleep 1
+          done
         env:
           DB_HOST: localhost
           DB_PORT: "5432"
