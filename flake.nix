@@ -238,7 +238,12 @@
       githubActions = githubActionsLib.mkGithubMatrix {
         checks = (nixpkgs.lib.attrsets.recursiveUpdate self.checks (
           nixpkgs.lib.attrsets.mapAttrs
-            (_: pkgs: nixpkgs.lib.attrsets.removeAttrs pkgs [ "freezeFile" ])
+            (system: pkgs:
+              let
+                isDarwin = nixpkgs.lib.strings.hasSuffix "darwin" system;
+                toRemove = [ "freezeFile" ] ++ nixpkgs.lib.optionals isDarwin [ "dockerImage" ];
+              in
+              nixpkgs.lib.attrsets.removeAttrs pkgs toRemove)
             self.packages
         ));
       };
