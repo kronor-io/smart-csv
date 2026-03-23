@@ -124,7 +124,7 @@ jobs:
 
   release:
     name: Release
-    # TODO: restore tag condition: if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: [nix-build, test]
     runs-on: ubuntu-latest
     permissions:
@@ -139,22 +139,18 @@ jobs:
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
       - name: Build Docker image
         run: nix build -L '.#dockerImage'
-      - name: Verify Docker image loads
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push Docker image
         run: |
+          IMAGE=ghcr.io/${{ github.repository }}/smart-csv-runner
+          VERSION=${GITHUB_REF_NAME#v}
           docker load < result
-          docker images smart-csv-runner
-      # TODO: uncomment when ready to publish
-      # - name: Log in to GHCR
-      #   uses: docker/login-action@v3
-      #   with:
-      #     registry: ghcr.io
-      #     username: ${{ github.actor }}
-      #     password: ${{ secrets.GITHUB_TOKEN }}
-      # - name: Push Docker image
-      #   run: |
-      #     IMAGE=ghcr.io/${{ github.repository }}/smart-csv-runner
-      #     VERSION=${GITHUB_REF_NAME#v}
-      #     docker tag smart-csv-runner:latest "$IMAGE:$VERSION"
-      #     docker tag smart-csv-runner:latest "$IMAGE:latest"
-      #     docker push "$IMAGE:$VERSION"
-      #     docker push "$IMAGE:latest"
+          docker tag smart-csv-runner:latest "$IMAGE:$VERSION"
+          docker tag smart-csv-runner:latest "$IMAGE:latest"
+          docker push "$IMAGE:$VERSION"
+          docker push "$IMAGE:latest"
