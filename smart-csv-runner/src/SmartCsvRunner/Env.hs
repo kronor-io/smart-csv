@@ -48,6 +48,11 @@ data Options = Options
     }
 
 
+data DbConnInfo
+    = DbConnUrl Text
+    | DbConnParts DbConnSpec
+
+
 data DbConnSpec = DbConnSpec
     { dbUser :: Text
     , dbPassword :: Text
@@ -66,10 +71,10 @@ instance HasParser Options where
         buildOptions
             <$> dbHostP
             <*> dbPortP
-            <*> dbConnSpecP "listener" "DB_LISTENER"
-            <*> dbConnSpecP "dequeuer" "DB_DEQUEUER"
-            <*> dbConnSpecP "worker" "DB_WORKER"
-            <*> dbConnSpecP "replica-csv" "DB_REPLICA_CSV"
+            <*> dbConnInfoP "listener" "DB_LISTENER"
+            <*> dbConnInfoP "dequeuer" "DB_DEQUEUER"
+            <*> dbConnInfoP "worker" "DB_WORKER"
+            <*> dbConnInfoP "replica-csv" "DB_REPLICA_CSV"
             <*> dequeuerPoolSizeP
             <*> workerPoolSizeP
             <*> replicaCsvPoolSizeP
@@ -90,10 +95,10 @@ instance HasParser Options where
         buildOptions
             dbHost
             dbPort
-            listenerSpec
-            dequeuerSpec
-            workerSpec
-            replicaCsvSpec
+            listenerInfo
+            dequeuerInfo
+            workerInfo
+            replicaCsvInfo
             dequeuerPoolSize
             workerPoolSize
             replicaCsvPoolSize
@@ -110,10 +115,10 @@ instance HasParser Options where
             optionsApiPort
             optionsJwtSecret
             optionsLogLevel =
-                let listenerSettings = mkDbSettings dbHost dbPort listenerSpec
-                    dequeuerSettings = mkDbSettings dbHost dbPort dequeuerSpec
-                    workerSettings = mkDbSettings dbHost dbPort workerSpec
-                    replicaCsvSettings = mkDbSettings dbHost dbPort replicaCsvSpec
+                let listenerSettings = resolveDbSettings dbHost dbPort listenerInfo
+                    dequeuerSettings = resolveDbSettings dbHost dbPort dequeuerInfo
+                    workerSettings = resolveDbSettings dbHost dbPort workerInfo
+                    replicaCsvSettings = resolveDbSettings dbHost dbPort replicaCsvInfo
                  in Options
                         { optionsListenerConn = pure listenerSettings
                         , optionsPgPoolDequeuer = liftIO $ do
@@ -166,6 +171,20 @@ instance HasParser Options where
                 , metavar envVar
                 , option
                 , OptEnvConf.env envVar
+                ]
+
+        dbConnInfoP role envPrefix =
+            (DbConnUrl <$> dbUrlP role envPrefix)
+                <|> (DbConnParts <$> dbConnSpecP role envPrefix)
+
+        dbUrlP role envPrefix =
+            setting
+                [ help ("postgres connection URL for " <> role)
+                , long ("db-" <> role <> "-url")
+                , reader str
+                , metavar (envPrefix <> "_URL")
+                , option
+                , OptEnvConf.env (envPrefix <> "_URL")
                 ]
 
         dbConnSpecP role envPrefix =
@@ -365,8 +384,13 @@ mkPool poolSize connSettings =
             ]
 
 
-mkDbSettings :: Text -> Int -> DbConnSpec -> [Hasql.Connection.Setting.Setting]
-mkDbSettings host port spec =
+resolveDbSettings :: Text -> Int -> DbConnInfo -> [Hasql.Connection.Setting.Setting]
+resolveDbSettings _ _ (DbConnUrl url) =
+    [ Hasql.Connection.Setting.connection
+        (Hasql.Connection.Setting.Connection.string url)
+    , Hasql.Connection.Setting.usePreparedStatements False
+    ]
+resolveDbSettings host port (DbConnParts spec) =
     [ Hasql.Connection.Setting.connection
         ( Hasql.Connection.Setting.Connection.params
             [ Hasql.Connection.Setting.Connection.Param.host host
