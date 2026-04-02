@@ -183,7 +183,8 @@
 
           withHoogle = false;
 
-          buildInputs = [
+          nativeBuildInputs = [
+            self.checks.${system}.pre-commit-check.enabledPackages
             pristinePkgs.sqitchPg
             pristinePkgs.postgresql
           ];
@@ -201,6 +202,7 @@
             hooks = {
               nixpkgs-fmt.enable = true;
               fourmolu.enable = false;
+              zizmor.enable = true;
             };
           };
         };
