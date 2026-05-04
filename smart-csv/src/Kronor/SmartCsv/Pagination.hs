@@ -33,16 +33,19 @@ extractCursor colConfig rootSelection paginationKey row = do
     Just cursor -> Right (decodeUtf8Lenient cursor)
 
 findColumnId :: Text -> Selection RAW -> Maybe Text
-findColumnId targetField = go
-  where
-    go InlineFragment {} = Nothing
-    go Spread {} = Nothing
-    go sel@(Selection {})
-      | unpackName sel.selectionName == targetField = Just (selectionOutputName sel)
-      | otherwise =
-          case sel.selectionContent of
-            SelectionSet sss -> asum (go <$> toList sss)
+findColumnId _ InlineFragment {} = Nothing
+findColumnId _ Spread {} = Nothing
+findColumnId targetField sel@(Selection {}) =
+  case sel.selectionContent of
+    SelectionSet sss ->
+      asum
+        [ case child of
+            Selection {}
+              | unpackName child.selectionName == targetField -> Just (selectionOutputName child)
             _ -> Nothing
+          | child <- toList sss
+        ]
+    _ -> Nothing
 
 setPaginationValues :: Aeson.Key -> Int -> Maybe Text -> Aeson.Value -> Aeson.Value
 setPaginationValues pKey limit mPaginationValue (Aeson.Object obj) =

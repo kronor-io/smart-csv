@@ -62,6 +62,7 @@ tests =
       testCase "inferHeaders with empty config returns alias ids" testInferHeadersPassThrough,
       testCase "inferHeaders with custom config renames aliased columns" testInferHeadersCustomConfig,
       testCase "extractCursor returns error when pagination field is not selected" testExtractCursorMissingSelection,
+      testCase "extractCursor ignores nested fields named like the pagination key" testExtractCursorIgnoresNestedField,
       testCase "decodeResponseRows with empty config uses alias ids" testDecodeResponseRowsPassThrough
     ]
 
@@ -272,6 +273,10 @@ fallbackCursorQueryText =
 missingCursorQueryText :: Text
 missingCursorQueryText =
   "query { paymentRequests { payment_request_id: waitToken } }"
+
+nestedCursorQueryText :: Text
+nestedCursorQueryText =
+  "query { paymentRequests { payment_request_id: waitToken customer { createdAt } } }"
 
 testClassifyResponseErrorRetry :: IO ()
 testClassifyResponseErrorRetry =
@@ -504,6 +509,13 @@ testExtractCursorMissingSelection = do
   root <- parseRootSelection missingCursorQueryText
   let row = Map.fromList [("Placed At", "2026-03-16T13:10:02Z")]
   extractCursor columnConfig root "createdAt" row
+    @?= Left (CursorColumnMissing "createdAt")
+
+testExtractCursorIgnoresNestedField :: IO ()
+testExtractCursorIgnoresNestedField = do
+  root <- parseRootSelection nestedCursorQueryText
+  let row = Map.fromList [("createdAt", "2026-03-16T13:10:02Z")]
+  extractCursor mempty root "createdAt" row
     @?= Left (CursorColumnMissing "createdAt")
 
 testDecodeResponseRowsPassThrough :: IO ()
