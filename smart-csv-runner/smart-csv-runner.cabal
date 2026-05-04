@@ -124,7 +124,6 @@ library
     , bytestring
     , cassava
     , co-log-json
-    , crypton
     , containers
     , jose
     , fastsum
@@ -135,7 +134,6 @@ library
     , hs-opentelemetry-api
     , hs-opentelemetry-exporter-otlp
     , hs-opentelemetry-instrumentation-wai
-    , hs-opentelemetry-otlp
     , hs-opentelemetry-propagator-w3c
     , hs-opentelemetry-sdk
     , http-client
@@ -143,7 +141,6 @@ library
     , immortal
     , iso8601-time
     , smart-csv
-    , memory
     , lens
     , lens-aeson
     , mime-mail
@@ -164,11 +161,9 @@ library
     , string-interpolate
     , text
     , time
-    , unliftio
     , unordered-containers
     , uuid
     , vector
-    , wai
     , warp
 
 executable smart-csv-runner
@@ -204,18 +199,14 @@ test-suite smart-csv-runner-test
     , hasql-pool
     , jose
     , hasql-th
-    , http-client
     , http-conduit
     , http-types
     , lens-aeson
-    , memory
     , rio
     , smart-csv-runner
     , string-interpolate
     , tasty
     , tasty-hunit
     , text
-    , time
-    , vector
     , wai
     , wai-extra

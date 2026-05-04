@@ -54,7 +54,7 @@ mkInput =
       graphqlPaginationKey = "createdAt",
       graphqlQueryBody =
         "query ($rowLimit: Int!, $paginationCondition: paymentRequests_bool_exp!) { \
-        \  paymentRequests(limit: $rowLimit, where: $paginationCondition) { waitToken } \
+        \  paymentRequests(limit: $rowLimit, where: $paginationCondition) { payment_request_id: waitToken } \
         \}",
       graphqlQueryVariables =
         "{\"conditions\":{\"createdAt\":{\"_gte\":\"2026-03-01T00:00:00Z\",\"_lt\":\"2026-03-15T00:00:00Z\"}}}",
@@ -164,7 +164,7 @@ testInputJsonDecodeMissingField = do
 
 testInputJsonDecodeWithColumnConfig :: IO ()
 testInputJsonDecodeWithColumnConfig = do
-  let input = mkInput {columnConfig = Just (Aeson.object [("field_a", Aeson.String "Column A")])}
+  let input = mkInput {columnConfig = Just (Aeson.object [("field_a", Aeson.object [("header", Aeson.String "Column A")])])}
       payload = Aeson.encode input
   Aeson.eitherDecode payload @?= Right input
 
@@ -178,7 +178,7 @@ testValidationRejectsBothColumnConfigs :: IO ()
 testValidationRejectsBothColumnConfigs = do
   let input =
         mkInput
-          { columnConfig = Just (Aeson.object [("field_a", Aeson.String "Column A")]),
+          { columnConfig = Just (Aeson.object [("field_a", Aeson.object [("header", Aeson.String "Column A")])]),
             columnConfigName = Just "payment_requests"
           }
   Val.validateSmartGraphqlCsvGeneratorInput input

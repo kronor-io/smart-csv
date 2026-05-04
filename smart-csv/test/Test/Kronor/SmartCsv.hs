@@ -7,7 +7,7 @@ import Data.Morpheus.Internal.Ext (Result (..))
 import Data.Morpheus.Types.IO (GQLRequest (..))
 import Data.Morpheus.Types.Internal.AST (ExecutableDocument (..), Operation (..), RAW, Selection)
 import Data.Vector qualified as Vector
-import Kronor.SmartCsv.ColumnConfig (columnConfig, parseColumnConfig)
+import Kronor.SmartCsv.ColumnConfig (ColumnSettings (..), columnConfig, parseColumnConfig)
 import Kronor.SmartCsv.ErrorHandling (ErrorAction (..), classifyCursorError, classifyJsonDecodeError, classifyResponseError, classifyTokenClaimsError)
 import Kronor.SmartCsv.Flatten (csvify, gatherSelectionNames)
 import Kronor.SmartCsv.Notification (CompletionEmail (..), EnqueueMeta (..), defaultEnqueueMeta, mkCompletionEmail)
@@ -27,10 +27,10 @@ tests :: TestTree
 tests =
   testGroup
     "SmartCsv"
-    [ testCase "csvify flattens nested object and applies configured headers" testCsvify,
-      testCase "gatherSelectionNames returns prefixed leaf fields" testGatherSelectionNames,
+    [ testCase "csvify extracts nested values via configured data paths" testCsvify,
+      testCase "gatherSelectionNames returns direct selected fields" testGatherSelectionNames,
       testCase "extractCursor resolves configured pagination column aliases" testExtractCursorWithAlias,
-      testCase "extractCursor falls back to raw key when no mapping exists" testExtractCursorFallback,
+      testCase "extractCursor falls back to field name when no alias exists" testExtractCursorFallback,
       testCase "resolvePaginationKey uses default createdAt" testResolvePaginationKeyDefault,
       testCase "buildRequestBody injects pagination variables" testBuildRequestBody,
       testCase "decodeResponseRows extracts csv rows from graphql data" testDecodeResponseRows,
@@ -43,7 +43,7 @@ tests =
       testCase "classifyResponseError with error message returns retryable action" testClassifyResponseErrorRetry,
       testCase "classifyResponseError with missing data returns non-retryable action" testClassifyResponseErrorMissingData,
       testCase "classifyResponseError with missing root returns non-retryable action" testClassifyResponseErrorMissingRoot,
-      testCase "classifyCursorError with deleted key returns non-retryable action" testClassifyCursorErrorDeleted,
+      testCase "classifyCursorError with missing selection returns non-retryable action" testClassifyCursorErrorMissingColumn,
       testCase "classifyCursorError with missing value returns non-retryable action" testClassifyCursorErrorMissing,
       testCase "classifyTokenClaimsError returns non-retryable action" testClassifyTokenClaimsError,
       testCase "classifyJsonDecodeError returns retryable action" testClassifyJsonDecodeError,
@@ -52,46 +52,64 @@ tests =
       testCase "validateQueryVariables rejects too-wide range" testValidateQueryVariablesTooWide,
       testCase "validateQueryVariables accepts bounded range" testValidateQueryVariablesValid,
       testCase "parseColumnConfig converts JSON object to column config map" testParseColumnConfig,
-      testCase "csvify with empty config uses raw field paths (pass-through)" testCsvifyPassThrough,
-      testCase "csvify suppresses fields mapped to null" testCsvifySuppression,
-      testCase "inferHeaders with empty config returns raw field paths" testInferHeadersPassThrough,
-      testCase "inferHeaders with custom config renames and suppresses" testInferHeadersCustomConfig,
-      testCase "extractCursor returns error when pagination key is suppressed" testExtractCursorSuppressed,
-      testCase "decodeResponseRows with empty config uses raw field paths" testDecodeResponseRowsPassThrough
+      testCase "csvify with empty config auto-extracts scalar from single-key objects" testCsvifyPassThrough,
+      testCase "csvify with empty config leaves multi-key objects blank" testCsvifyMultiKeyObject,
+      testCase "csvify serializes arrays as comma-separated values" testCsvifyArrayValues,
+      testCase "csvify ignores null values inside arrays" testCsvifyArrayIgnoresNulls,
+      testCase "csvify ignores arrays of objects with only null selected fields" testCsvifyArrayObjectNullFields,
+      testCase "csvify applies custom decimal places per column" testCsvifyCustomDecimalPlaces,
+      testCase "csvify keeps numeric values as-is when decimalPlaces is unset" testCsvifyNumericPreservesOriginal,
+      testCase "inferHeaders with empty config returns alias ids" testInferHeadersPassThrough,
+      testCase "inferHeaders with custom config renames aliased columns" testInferHeadersCustomConfig,
+      testCase "extractCursor returns error when pagination field is not selected" testExtractCursorMissingSelection,
+      testCase "decodeResponseRows with empty config uses alias ids" testDecodeResponseRowsPassThrough
     ]
 
 testCsvify :: IO ()
 testCsvify = do
   let row =
         Aeson.object
-          [ ("waitToken", Aeson.String "wt_123"),
-            ("attempts", Aeson.Array (Vector.fromList [Aeson.object [("cardType", Aeson.String "VISA")]])),
-            ("customer", Aeson.object [("email", Aeson.String "user@example.com"), ("name", Aeson.String "Ada")])
+          [ ("payment_request_id", Aeson.String "wt_123"),
+            ( "attempts",
+              Aeson.Array
+                ( Vector.fromList
+                    [ Aeson.object
+                        [("payment", Aeson.object [("cardType", Aeson.String "VISA")])]
+                    ]
+                )
+            ),
+            ( "customer",
+              Aeson.object
+                [ ("profile", Aeson.object [("email", Aeson.String "user@example.com"), ("name", Aeson.String "Ada")])
+                ]
+            )
           ]
       result = csvify columnConfig "paymentRequests" row
   Map.lookup "Payment Request ID" result @?= Just "wt_123"
   Map.lookup "Card Type" result @?= Just "VISA"
   Map.lookup "Customer Email" result @?= Just "user@example.com"
-  Map.lookup "Customer Name" result @?= Just "Ada"
 
 testGatherSelectionNames :: IO ()
 testGatherSelectionNames = do
   root <- parseRootSelection gqlQueryText
   gatherSelectionNames root
-    @?= [ "paymentRequests_waitToken",
-          "paymentRequests_customer_email",
-          "paymentRequests_attempts_cardType"
+    @?= [ "payment_request_id",
+          "placed_at",
+          "customer",
+          "attempts"
         ]
 
 testExtractCursorWithAlias :: IO ()
 testExtractCursorWithAlias = do
+  root <- parseRootSelection gqlQueryText
   let row = Map.fromList [("Placed At", "2026-03-16T13:10:02Z")]
-  extractCursor columnConfig "paymentRequests" "createdAt" row @?= Right "2026-03-16T13:10:02Z"
+  extractCursor columnConfig root "createdAt" row @?= Right "2026-03-16T13:10:02Z"
 
 testExtractCursorFallback :: IO ()
 testExtractCursorFallback = do
-  let row = Map.fromList [("paymentRequests_internalCursor", "cursor_001")]
-  extractCursor mempty "paymentRequests" "internalCursor" row @?= Right "cursor_001"
+  root <- parseRootSelection fallbackCursorQueryText
+  let row = Map.fromList [("internalCursor", "cursor_001")]
+  extractCursor mempty root "internalCursor" row @?= Right "cursor_001"
 
 testResolvePaginationKeyDefault :: IO ()
 testResolvePaginationKeyDefault = do
@@ -103,7 +121,7 @@ testBuildRequestBody = do
   let gq =
         GenericQuery
           { paginationKey = Just "createdAt",
-            query = "query ($rowLimit: Int!, $paginationCondition: paymentRequests_bool_exp!) { paymentRequests { waitToken } }",
+            query = "query ($rowLimit: Int!, $paginationCondition: paymentRequests_bool_exp!) { paymentRequests { payment_request_id: waitToken } }",
             variables = Aeson.object [("existingVar", Aeson.String "kept")]
           }
       payload = buildRequestBody "createdAt" 100 (Just "cursor_123") gq
@@ -133,8 +151,8 @@ testDecodeResponseRows = do
                     Aeson.Array
                       ( Vector.fromList
                           [ Aeson.object
-                              [ ("waitToken", Aeson.String "wt_777"),
-                                ("createdAt", Aeson.String "2026-03-16T14:22:00Z")
+                              [ ("payment_request_id", Aeson.String "wt_777"),
+                                ("placed_at", Aeson.String "2026-03-16T14:22:00Z")
                               ]
                           ]
                       )
@@ -223,11 +241,20 @@ gqlQueryText :: Text
 gqlQueryText =
   "query ($rowLimit: Int!, $paginationCondition: paymentRequests_bool_exp!) { \
   \  paymentRequests(limit: $rowLimit, where: $paginationCondition) { \
-  \    waitToken \
-  \    customer { email } \
-  \    attempts { cardType } \
+  \    payment_request_id: waitToken \
+  \    placed_at: createdAt \
+  \    customer { profile { email name } } \
+  \    attempts { payment { cardType } } \
   \  } \
   \}"
+
+fallbackCursorQueryText :: Text
+fallbackCursorQueryText =
+  "query { orders { internalCursor } }"
+
+missingCursorQueryText :: Text
+missingCursorQueryText =
+  "query { paymentRequests { payment_request_id: waitToken } }"
 
 testClassifyResponseErrorRetry :: IO ()
 testClassifyResponseErrorRetry =
@@ -244,15 +271,15 @@ testClassifyResponseErrorMissingRoot =
   classifyResponseError ResponseMissingRootData
     @?= Giveup "GraphQL response does not contain expected root query data."
 
-testClassifyCursorErrorDeleted :: IO ()
-testClassifyCursorErrorDeleted =
-  classifyCursorError (CursorKeyDeleted "paymentRequests_createdAt")
-    @?= Giveup "Cursor key is marked to be deleted: paymentRequests_createdAt"
+testClassifyCursorErrorMissingColumn :: IO ()
+testClassifyCursorErrorMissingColumn =
+  classifyCursorError (CursorColumnMissing "createdAt")
+    @?= Giveup "GraphQL query does not select pagination field: createdAt"
 
 testClassifyCursorErrorMissing :: IO ()
 testClassifyCursorErrorMissing =
   classifyCursorError (CursorValueMissing "Placed At")
-    @?= Giveup "If you see this that means you need to look in columnConfig for missing pagination key column mapping (Placed At)"
+    @?= Giveup "GraphQL response is missing the pagination cursor column: Placed At"
 
 testClassifyTokenClaimsError :: IO ()
 testClassifyTokenClaimsError =
@@ -270,7 +297,7 @@ testValidateGraphqlQueryBodyValid =
 
 testValidateGraphqlQueryBodyMissingPaginationCondition :: IO ()
 testValidateGraphqlQueryBodyMissingPaginationCondition =
-  SmartCsvValidation.validateGraphqlQueryBody "query ($rowLimit: Int!) { paymentRequests(limit: $rowLimit) { waitToken } }"
+  SmartCsvValidation.validateGraphqlQueryBody "query ($rowLimit: Int!) { paymentRequests(limit: $rowLimit) { payment_request_id: waitToken } }"
     @?= Left (pure "The query must define a paginationCondition variable.")
 
 testValidateQueryVariablesTooWide :: IO ()
@@ -288,13 +315,19 @@ testParseColumnConfig :: IO ()
 testParseColumnConfig = do
   let json =
         Aeson.object
-          [ ("field_a", Aeson.String "Column A"),
-            ("field_b", Aeson.Null)
+          [ ( "field_a",
+              Aeson.object
+                [ ("header", Aeson.String "Column A"),
+                  ("decimalPlaces", Aeson.toJSON (3 :: Int)),
+                  ("dataPath", Aeson.String "customer.email")
+                ]
+            ),
+            ("field_b", Aeson.object [])
           ]
   parseColumnConfig json
     @?= Map.fromList
-      [ ("field_a", Just "Column A"),
-        ("field_b", Nothing)
+      [ ("field_a", ColumnSettings (Just 3) (Just "Column A") (Just "customer.email")),
+        ("field_b", ColumnSettings Nothing Nothing Nothing)
       ]
   parseColumnConfig Aeson.Null @?= Map.empty
 
@@ -302,62 +335,159 @@ testCsvifyPassThrough :: IO ()
 testCsvifyPassThrough = do
   let row =
         Aeson.object
-          [ ("waitToken", Aeson.String "wt_123"),
-            ("customer", Aeson.object [("email", Aeson.String "user@example.com")])
+          [ ("payment_request_id", Aeson.String "wt_123"),
+            ("customer", Aeson.object [("profile", Aeson.object [("email", Aeson.String "user@example.com")])]),
+            ("tags", Aeson.Array (Vector.fromList [Aeson.object [("label", Aeson.String "vip")]]))
           ]
       result = csvify mempty "orders" row
-  -- With empty config, raw prefixed paths are used as keys
-  Map.lookup "orders_waitToken" result @?= Just "wt_123"
-  Map.lookup "orders_customer_email" result @?= Just "user@example.com"
+  Map.lookup "payment_request_id" result @?= Just "wt_123"
+  Map.lookup "customer" result @?= Just "user@example.com"
+  Map.lookup "tags" result @?= Just "vip"
 
-testCsvifySuppression :: IO ()
-testCsvifySuppression = do
+testCsvifyMultiKeyObject :: IO ()
+testCsvifyMultiKeyObject = do
+  let row =
+        Aeson.object
+          [ ("customer", Aeson.object [("email", Aeson.String "user@example.com"), ("name", Aeson.String "Ada")]) ]
+      result = csvify mempty "orders" row
+  Map.lookup "customer" result @?= Nothing
+
+testCsvifyArrayValues :: IO ()
+testCsvifyArrayValues = do
   let config =
         Map.fromList
-          [ ("orders_waitToken", Just "Order ID"),
-            ("orders_customer_email", Nothing) -- suppress this field
+          [ ("amounts", ColumnSettings (Just 1) (Just "Amounts") Nothing),
+            ("attempts", ColumnSettings Nothing (Just "Card Types") (Just "payment.cardType"))
           ]
       row =
         Aeson.object
-          [ ("waitToken", Aeson.String "wt_123"),
-            ("customer", Aeson.object [("email", Aeson.String "user@example.com")])
+          [ ("amounts", Aeson.Array (Vector.fromList [Aeson.Number 12.34, Aeson.Number 56.78])),
+            ( "attempts",
+              Aeson.Array
+                ( Vector.fromList
+                    [ Aeson.object [("payment", Aeson.object [("cardType", Aeson.String "VISA")])],
+                      Aeson.object [("payment", Aeson.object [("cardType", Aeson.String "MASTERCARD")])]
+                    ]
+                )
+            )
           ]
       result = csvify config "orders" row
-  Map.lookup "Order ID" result @?= Just "wt_123"
-  -- Suppressed field should not appear at all
-  Map.member "orders_customer_email" result @?= False
-  Map.member "Customer Email" result @?= False
+  Map.lookup "Amounts" result @?= Just "12.3,56.7"
+  Map.lookup "Card Types" result @?= Just "VISA,MASTERCARD"
+
+testCsvifyArrayIgnoresNulls :: IO ()
+testCsvifyArrayIgnoresNulls = do
+  let config =
+        Map.fromList
+          [ ("amounts", ColumnSettings (Just 1) (Just "Amounts") Nothing),
+            ("attempts", ColumnSettings Nothing (Just "Card Types") (Just "payment.cardType"))
+          ]
+      row =
+        Aeson.object
+          [ ("amounts", Aeson.Array (Vector.fromList [Aeson.Null, Aeson.Number 12.34, Aeson.Null, Aeson.Number 56.78])),
+            ( "attempts",
+              Aeson.Array
+                ( Vector.fromList
+                    [ Aeson.Null,
+                      Aeson.object [("payment", Aeson.object [("cardType", Aeson.String "VISA")])],
+                      Aeson.Null,
+                      Aeson.object [("payment", Aeson.object [("cardType", Aeson.String "MASTERCARD")])]
+                    ]
+                )
+            )
+          ]
+      result = csvify config "orders" row
+  Map.lookup "Amounts" result @?= Just "12.3,56.7"
+  Map.lookup "Card Types" result @?= Just "VISA,MASTERCARD"
+
+testCsvifyArrayObjectNullFields :: IO ()
+testCsvifyArrayObjectNullFields = do
+  let config =
+        Map.fromList
+          [("attempts", ColumnSettings Nothing (Just "Card Types") (Just "payment.cardType"))]
+      row =
+        Aeson.object
+          [ ( "attempts",
+              Aeson.Array
+                ( Vector.fromList
+                    [ Aeson.object [("payment", Aeson.object [("cardType", Aeson.Null)])],
+                      Aeson.object [("payment", Aeson.object [("cardType", Aeson.Null)])],
+                      Aeson.object [("payment", Aeson.object [("cardType", Aeson.Null)])]
+                    ]
+                )
+            )
+          ]
+      result = csvify config "orders" row
+  Map.lookup "Card Types" result @?= Just ""
+
+testCsvifyCustomDecimalPlaces :: IO ()
+testCsvifyCustomDecimalPlaces = do
+  let config =
+        Map.fromList
+          [ ("amount", ColumnSettings (Just 3) (Just "Amount") Nothing),
+            ("exchange_rate", ColumnSettings (Just 4) (Just "Rate") Nothing)
+          ]
+      row =
+        Aeson.object
+          [ ("amount", Aeson.Number 12.3456),
+            ("exchange_rate", Aeson.String "1.23456")
+          ]
+      result = csvify config "orders" row
+  Map.lookup "Amount" result @?= Just "12.345"
+  Map.lookup "Rate" result @?= Just "1.2345"
+
+testCsvifyNumericPreservesOriginal :: IO ()
+testCsvifyNumericPreservesOriginal = do
+  let config =
+        Map.fromList
+          [ ("price", ColumnSettings Nothing (Just "Price") Nothing),
+            ("quantity", ColumnSettings Nothing (Just "Quantity") Nothing),
+            ("discount", ColumnSettings Nothing (Just "Discount") Nothing)
+          ]
+      row =
+        Aeson.object
+          [ ("price", Aeson.Number 123.456),
+            ("quantity", Aeson.String "50.10"),
+            ("discount", Aeson.Number 10)
+          ]
+      result = csvify config "orders" row
+  Map.lookup "Price" result @?= Just "123.456"
+  Map.lookup "Quantity" result @?= Just "50.10"
+  Map.lookup "Discount" result @?= Just "10"
 
 testInferHeadersPassThrough :: IO ()
 testInferHeadersPassThrough = do
   root <- parseRootSelection gqlQueryText
   inferHeaders mempty root
-    @?= [ "paymentRequests_waitToken",
-          "paymentRequests_customer_email",
-          "paymentRequests_attempts_cardType"
+    @?= [ "payment_request_id",
+          "placed_at",
+          "customer",
+          "attempts"
         ]
 
 testInferHeadersCustomConfig :: IO ()
 testInferHeadersCustomConfig = do
   let config =
         Map.fromList
-          [ ("paymentRequests_waitToken", Just "Order ID"),
-            ("paymentRequests_customer_email", Nothing) -- suppress
-            -- paymentRequests_attempts_cardType not in config -> pass-through
+          [ ("payment_request_id", ColumnSettings Nothing (Just "Order ID") Nothing),
+            ("placed_at", ColumnSettings Nothing (Just "Placed At") Nothing),
+            ("customer", ColumnSettings Nothing (Just "Customer Email") (Just "profile.email")),
+            ("attempts", ColumnSettings Nothing (Just "Card Type") (Just "payment.cardType"))
           ]
   root <- parseRootSelection gqlQueryText
   inferHeaders config root
     @?= [ "Order ID",
-          -- customer_email is suppressed, so absent from list
-          "paymentRequests_attempts_cardType"
+          "Placed At",
+          "Customer Email",
+          "Card Type"
         ]
 
-testExtractCursorSuppressed :: IO ()
-testExtractCursorSuppressed = do
-  let config = Map.fromList [("paymentRequests_createdAt", Nothing)]
-      row = Map.fromList [("Placed At", "2026-03-16T13:10:02Z")]
-  extractCursor config "paymentRequests" "createdAt" row
-    @?= Left (CursorKeyDeleted "paymentRequests_createdAt")
+testExtractCursorMissingSelection :: IO ()
+testExtractCursorMissingSelection = do
+  root <- parseRootSelection missingCursorQueryText
+  let row = Map.fromList [("Placed At", "2026-03-16T13:10:02Z")]
+  extractCursor columnConfig root "createdAt" row
+    @?= Left (CursorColumnMissing "createdAt")
 
 testDecodeResponseRowsPassThrough :: IO ()
 testDecodeResponseRowsPassThrough = do
@@ -369,8 +499,8 @@ testDecodeResponseRowsPassThrough = do
                     Aeson.Array
                       ( Vector.fromList
                           [ Aeson.object
-                              [ ("reference", Aeson.String "ref_001"),
-                                ("amount", Aeson.Number 1500)
+                              [ ("reference_col", Aeson.String "ref_001"),
+                                ("amount_col", Aeson.Number 1500)
                               ]
                           ]
                       )
@@ -378,7 +508,6 @@ testDecodeResponseRowsPassThrough = do
                 ]
             )
           ]
-      emptyRow = Map.fromList [("orders_reference", mempty), ("orders_amount", mempty)]
-  -- With empty config, raw field paths appear in output
+      emptyRow = Map.fromList [("reference_col", mempty), ("amount_col", mempty)]
   decodeResponseRows mempty "orders" emptyRow response
-    @?= Right (Vector.fromList [Map.fromList [("orders_reference", "ref_001"), ("orders_amount", "1500.0")]])
+    @?= Right (Vector.fromList [Map.fromList [("reference_col", "ref_001"), ("amount_col", "1500")]])

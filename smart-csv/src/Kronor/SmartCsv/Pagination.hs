@@ -10,38 +10,39 @@ import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as Aeson.KeyMap
 import Data.Csv qualified as Csv
 import Data.Map.Strict qualified as Map
-import Data.Morpheus.Types.Internal.AST (RAW, Selection)
-import Kronor.SmartCsv.Flatten (gatherSelectionNames)
+import Data.Morpheus.Types.Internal.AST (RAW, Selection (..), SelectionContent (..), unpackName)
+import Kronor.SmartCsv.ColumnConfig (ColumnConfig, columnHeader)
+import Kronor.SmartCsv.Flatten (gatherSelectionNames, selectionOutputName)
 import RIO
 
 data CursorError
-  = CursorKeyDeleted Text
+  = CursorColumnMissing Text
   | CursorValueMissing Text
   deriving stock (Eq, Show)
 
-inferHeaders :: Map Text (Maybe Text) -> Selection RAW -> [Text]
+inferHeaders :: ColumnConfig -> Selection RAW -> [Text]
 inferHeaders colConfig rootSelection =
-  mapMaybe
-    ( \key -> case Map.lookup key colConfig of
-        Just Nothing -> Nothing
-        Nothing -> Just key
-        Just mappedKey -> mappedKey
-    )
-    (gatherSelectionNames rootSelection)
+  map (`columnHeader` colConfig) (gatherSelectionNames rootSelection)
 
-extractCursor :: Map Text (Maybe Text) -> Text -> Text -> Map Text Csv.Field -> Either CursorError Text
-extractCursor colConfig root paginationKey row =
-  let rawColumn = root <> "_" <> paginationKey
-      selectedColumn =
-        case Map.lookup rawColumn colConfig of
-          Nothing -> Right rawColumn
-          Just Nothing -> Left (CursorKeyDeleted rawColumn)
-          Just (Just colName) -> Right colName
-   in do
-        cursorColumn <- selectedColumn
-        case row Map.!? cursorColumn of
-          Nothing -> Left (CursorValueMissing cursorColumn)
-          Just cursor -> Right (decodeUtf8Lenient cursor)
+extractCursor :: ColumnConfig -> Selection RAW -> Text -> Map Text Csv.Field -> Either CursorError Text
+extractCursor colConfig rootSelection paginationKey row = do
+  columnId <- maybe (Left (CursorColumnMissing paginationKey)) Right (findColumnId paginationKey rootSelection)
+  let cursorColumn = columnHeader columnId colConfig
+  case row Map.!? cursorColumn of
+    Nothing -> Left (CursorValueMissing cursorColumn)
+    Just cursor -> Right (decodeUtf8Lenient cursor)
+
+findColumnId :: Text -> Selection RAW -> Maybe Text
+findColumnId targetField = go
+  where
+    go InlineFragment {} = Nothing
+    go Spread {} = Nothing
+    go sel@(Selection {})
+      | unpackName sel.selectionName == targetField = Just (selectionOutputName sel)
+      | otherwise =
+          case sel.selectionContent of
+            SelectionSet sss -> asum (go <$> toList sss)
+            _ -> Nothing
 
 setPaginationValues :: Aeson.Key -> Int -> Maybe Text -> Aeson.Value -> Aeson.Value
 setPaginationValues pKey limit mPaginationValue (Aeson.Object obj) =
