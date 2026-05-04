@@ -1,7 +1,6 @@
 module Kronor.SmartCsv.ColumnConfig
   ( ColumnConfig,
     ColumnSettings (..),
-    columnConfig,
     columnDataPath,
     columnDecimalPlaces,
     columnHeader,
@@ -59,20 +58,3 @@ columnDataPath columnId colConfig =
   maybe [] (filter (not . Text.null) . Text.splitOn ".") $ do
     settings <- Map.lookup columnId colConfig
     settings.dataPath
-
--- | Hardcoded column config, kept for test reference.
-columnConfig :: ColumnConfig
-columnConfig =
-  Map.fromList
-    [ ("payment_request_id", ColumnSettings Nothing (Just "Payment Request ID") Nothing),
-      ("transaction_id", ColumnSettings Nothing (Just "Transaction ID") Nothing),
-      ("merchant_id", ColumnSettings Nothing (Just "Merchant ID") Nothing),
-      ("placed_at", ColumnSettings Nothing (Just "Placed At") Nothing),
-      ("reference", ColumnSettings Nothing (Just "Reference") Nothing),
-      ("payment_method", ColumnSettings Nothing (Just "Payment Method") Nothing),
-      ("attempts", ColumnSettings Nothing (Just "Card Type") (Just "payment.cardType")),
-      ("customer", ColumnSettings Nothing (Just "Customer Email") (Just "profile.email")),
-      ("latest_status", ColumnSettings Nothing (Just "Latest Status") Nothing),
-      ("currency", ColumnSettings Nothing (Just "Currency") Nothing),
-      ("amount", ColumnSettings Nothing (Just "Amount") Nothing)
-    ]

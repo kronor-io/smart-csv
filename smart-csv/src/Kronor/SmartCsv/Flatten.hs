@@ -20,14 +20,12 @@ import Data.Vector qualified
 import Kronor.SmartCsv.ColumnConfig (ColumnConfig, columnDataPath, columnDecimalPlaces, columnHeader)
 import RIO
 
--- |
--- { "paymentRequests" : [], "otherRootQuery" : [] }
---
--- convert "paymentRequests" {"transactionId" : "PA3532115", "customer": { "email" : "amil@email.com", "name" : "Email Person"}, "attempts": [{"cardType": "VISA"}]}
---
--- to
---
--- { "transaction_id": "", "customer_email": "", "customer_name": "", "card_type": "VISA" }
+-- | Convert one GraphQL response row into a flat CSV field map.
+-- Each top-level key in the JSON object becomes a column keyed by its CSV header
+-- (resolved via 'columnHeader').  Scalar values are used directly; nested objects
+-- and arrays are resolved using the 'dataPath' from the column config (see
+-- 'columnDataPath').  Arrays are serialised by rendering every element and
+-- joining them with commas.
 csvify :: ColumnConfig -> Text -> Aeson.Value -> Map Text Csv.Field
 csvify colConfig _ (Aeson.Object (Aeson.KeyMap.toMapText -> obj)) =
   Map.unions $ mapMaybe extractColumn (Map.toList obj)
@@ -97,7 +95,7 @@ csvify colConfig _ (Aeson.Object (Aeson.KeyMap.toMapText -> obj)) =
     extractColumn (columnId, value) = do
       fieldValue <- renderValue columnId (columnDataPath columnId colConfig) value
       pure (singletonField columnId fieldValue)
-csvify _ _ _ = error "Expects an Aeson.Object, but instead received :"
+csvify _ _ v = error ("csvify: expected a JSON object, but received: " <> show v)
 
 gatherSelectionNames :: Selection RAW -> [Text]
 gatherSelectionNames = go

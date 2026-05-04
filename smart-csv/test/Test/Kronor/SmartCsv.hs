@@ -7,7 +7,7 @@ import Data.Morpheus.Internal.Ext (Result (..))
 import Data.Morpheus.Types.IO (GQLRequest (..))
 import Data.Morpheus.Types.Internal.AST (ExecutableDocument (..), Operation (..), RAW, Selection)
 import Data.Vector qualified as Vector
-import Kronor.SmartCsv.ColumnConfig (ColumnSettings (..), columnConfig, parseColumnConfig)
+import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnSettings (..), parseColumnConfig)
 import Kronor.SmartCsv.ErrorHandling (ErrorAction (..), classifyCursorError, classifyJsonDecodeError, classifyResponseError, classifyTokenClaimsError)
 import Kronor.SmartCsv.Flatten (csvify, gatherSelectionNames)
 import Kronor.SmartCsv.Notification (CompletionEmail (..), EnqueueMeta (..), defaultEnqueueMeta, mkCompletionEmail)
@@ -236,6 +236,23 @@ parseRootSelection q =
       case headMaybe (toList executableDocument.operation.operationSelection) of
         Nothing -> assertFailure "empty selection set" >> error "unreachable"
         Just root -> pure root
+
+-- | Sample column config used across several tests.
+columnConfig :: ColumnConfig
+columnConfig =
+  Map.fromList
+    [ ("payment_request_id", ColumnSettings Nothing (Just "Payment Request ID") Nothing),
+      ("transaction_id", ColumnSettings Nothing (Just "Transaction ID") Nothing),
+      ("merchant_id", ColumnSettings Nothing (Just "Merchant ID") Nothing),
+      ("placed_at", ColumnSettings Nothing (Just "Placed At") Nothing),
+      ("reference", ColumnSettings Nothing (Just "Reference") Nothing),
+      ("payment_method", ColumnSettings Nothing (Just "Payment Method") Nothing),
+      ("attempts", ColumnSettings Nothing (Just "Card Type") (Just "payment.cardType")),
+      ("customer", ColumnSettings Nothing (Just "Customer Email") (Just "profile.email")),
+      ("latest_status", ColumnSettings Nothing (Just "Latest Status") Nothing),
+      ("currency", ColumnSettings Nothing (Just "Currency") Nothing),
+      ("amount", ColumnSettings Nothing (Just "Amount") Nothing)
+    ]
 
 gqlQueryText :: Text
 gqlQueryText =
