@@ -36,13 +36,13 @@ classifyResponseError ResponseMissingRootData =
 
 
 -- | Classify pagination cursor extraction errors.
--- CursorKeyDeleted indicates misconfiguration and is non-retryable.
+-- CursorColumnMissing indicates misconfiguration and is non-retryable.
 -- CursorValueMissing indicates missing column in data (non-retryable).
 classifyCursorError :: CursorError -> ErrorAction
-classifyCursorError (CursorKeyDeleted colName) =
-    Giveup $ "Cursor key is marked to be deleted: " <> colName
+classifyCursorError (CursorColumnMissing colName) =
+    Giveup $ "GraphQL query does not select pagination field: " <> colName
 classifyCursorError (CursorValueMissing colName) =
-    Giveup $ "If you see this that means you need to look in columnConfig for missing pagination key column mapping (" <> colName <> ")"
+    Giveup $ "GraphQL response is missing the pagination cursor column: " <> colName
 
 
 -- | Classify token claims parsing errors.

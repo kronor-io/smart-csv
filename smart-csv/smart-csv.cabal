@@ -90,6 +90,8 @@ library
     , hasql-th
     , morpheus-graphql-core
     , rio                    >=0.1.12.0
+    , scientific
+    , text
     , time
     , vector
 
@@ -101,8 +103,6 @@ test-suite smart-csv-test
   hs-source-dirs:   test
   build-depends:
       aeson
-    , base                     >=4.11     && <10
-    , cassava
     , containers
     , smart-csv
     , morpheus-graphql-core
@@ -110,4 +110,3 @@ test-suite smart-csv-test
     , tasty
     , tasty-hunit
     , vector
-

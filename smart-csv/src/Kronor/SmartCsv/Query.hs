@@ -12,6 +12,7 @@ import Data.Aeson.Key qualified as Aeson.Key
 import Data.Aeson.KeyMap qualified as Aeson.KeyMap
 import Data.Csv qualified as Csv
 import Data.Map.Strict qualified as Map
+import Kronor.SmartCsv.ColumnConfig (ColumnConfig)
 import Kronor.SmartCsv.Flatten (csvify)
 import Kronor.SmartCsv.Pagination (setPaginationValues)
 import RIO
@@ -38,7 +39,7 @@ buildRequestBody :: Aeson.Key -> Int -> Maybe Text -> GenericQuery -> LByteStrin
 buildRequestBody pKey batchSize mCursor gq =
   Aeson.encode gq {variables = setPaginationValues pKey batchSize mCursor gq.variables}
 
-decodeResponseRows :: Map Text (Maybe Text) -> Text -> Map Text Csv.Field -> Aeson.Value -> Either ResponseError (Vector (Map Text Csv.Field))
+decodeResponseRows :: ColumnConfig -> Text -> Map Text Csv.Field -> Aeson.Value -> Either ResponseError (Vector (Map Text Csv.Field))
 decodeResponseRows colConfig root emptyCsvRow (Aeson.Object responseObj) =
   case Aeson.KeyMap.lookup "error" responseObj of
     Just (Aeson.String errMsg) -> Left (ResponseContainsError errMsg)

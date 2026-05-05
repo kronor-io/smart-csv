@@ -14,7 +14,7 @@ import Data.Map.Strict qualified as Map
 import Data.Morpheus.Core (parseRequest)
 import Data.Morpheus.Internal.Ext (Result (..))
 import Data.Morpheus.Types.IO (GQLRequest (..))
-import Data.Morpheus.Types.Internal.AST (ExecutableDocument (..), Operation (..), Selection (..), unpackName)
+import Data.Morpheus.Types.Internal.AST (ExecutableDocument (..), Operation (..), RAW, Selection (..), unpackName)
 import Data.String.Interpolate (iii)
 import Data.Text.Encoding qualified as Text
 import GHC.Stack (withFrozenCallStack)
@@ -23,6 +23,7 @@ import JobSchemas.SmartGraphqlCsvGenerate
 import Kronor.Db qualified as Db
 import Kronor.Db.Types.Bigint (Bigint (..))
 import Kronor.Http qualified as Req
+import Kronor.SmartCsv.ColumnConfig (ColumnConfig)
 import Kronor.SmartCsv.ColumnConfig qualified as SmartCsvColumnConfig
 import Kronor.SmartCsv.ErrorHandling qualified as SmartCsvErrorHandling
 import Kronor.SmartCsv.Notification qualified as SmartCsvNotification
@@ -141,7 +142,7 @@ generateCSV payload = do
             (gqlQuery resolvedColumnConfig paginationKey authToken gq inferredRoot emptyMap 1000 options.optionsGraphqlUrl)
             (pure True)
             (Vector.fromList (encodeUtf8 <$> inferredHeadersFromGql))
-            (gqlCursor resolvedColumnConfig paginationKey pId inferredRoot)
+            (gqlCursor resolvedColumnConfig paginationKey pId inferredRootField)
             id
             fileKey
             generatedCsvPayload
@@ -149,16 +150,16 @@ generateCSV payload = do
     Failure errs -> do
       Job.giveupS logSource (displayBytesUtf8 (toStrictBytes (Aeson.encode errs)))
   where
-    gqlCursor :: Map Text (Maybe Text) -> Aeson.Key -> Job.PayloadId -> Text -> CsvRow -> Text
-    gqlCursor colConfig pKey pId root v =
-      case SmartCsv.extractCursor colConfig root (Aeson.Key.toText pKey) v of
+    gqlCursor :: ColumnConfig -> Aeson.Key -> Job.PayloadId -> Selection RAW -> CsvRow -> Text
+    gqlCursor colConfig pKey pId rootSelection v =
+      case SmartCsv.extractCursor colConfig rootSelection (Aeson.Key.toText pKey) v of
         Left cursorErr ->
           case SmartCsvErrorHandling.classifyCursorError cursorErr of
             SmartCsvErrorHandling.Retry _ -> error "Unexpected retry for cursor error"
             SmartCsvErrorHandling.Giveup msg ->
               Control.Exception.throw $ Job.NonRetryableException pId $ Job.StringyException logSource msg
         Right cursor -> cursor
-    gqlQuery :: Map Text (Maybe Text) -> Aeson.Key -> ByteString -> GenericQuery -> Text -> CsvRow -> Int -> Text -> Maybe Text -> Job S3Config (Vector CsvRow)
+    gqlQuery :: ColumnConfig -> Aeson.Key -> ByteString -> GenericQuery -> Text -> CsvRow -> Int -> Text -> Maybe Text -> Job S3Config (Vector CsvRow)
     gqlQuery colConfig pKey authToken GenericQuery {..} root emptyCsvRow batchSize graphqlUrl mCursor = do
       let reqBody = SmartCsvQuery.buildRequestBody pKey batchSize mCursor GenericQuery {..}
       eRes <-

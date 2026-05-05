@@ -195,8 +195,8 @@ testGeneratesCsvEndToEnd = do
 
   length rows @?= 3
 
-  let refCol = "smartCsvE2eTestData_reference"
-      amtCol = "smartCsvE2eTestData_amount"
+  let refCol = "reference_col"
+      amtCol = "amount_col"
       refAmounts = Map.fromList [(r, a) | row <- rows, Just r <- [Map.lookup refCol row], Just a <- [Map.lookup amtCol row]]
   -- Hasura returns bigint as a number, CSV may have ".0" suffix
   let stripDecimal t = fromMaybe t (Text.stripSuffix ".0" t)
@@ -242,9 +242,9 @@ testGeneratesCsvWithInlineColumnConfig = do
   -- 2. POST with inline columnConfig that renames columns
   let inlineConfig =
         Aeson.object
-          [ "smartCsvE2eTestData_reference" Aeson..= ("Reference" :: Text),
-            "smartCsvE2eTestData_amount" Aeson..= ("Amount" :: Text),
-            "smartCsvE2eTestData_createdAt" Aeson..= ("Created" :: Text)
+          [ "reference_col" Aeson..= Aeson.object ["header" Aeson..= ("Reference" :: Text)],
+            "amount_col" Aeson..= Aeson.object ["header" Aeson..= ("Amount" :: Text), "decimalPlaces" Aeson..= (0 :: Int)],
+            "placed_at" Aeson..= Aeson.object ["header" Aeson..= ("Created" :: Text)]
           ]
   let restInput =
         Aeson.object
@@ -296,8 +296,8 @@ testGeneratesCsvWithInlineColumnConfig = do
 
   -- Verify raw column names are NOT present
   let allHeaders = concatMap Map.keys rows
-  assertNotElem "smartCsvE2eTestData_reference" allHeaders
-  assertNotElem "smartCsvE2eTestData_amount" allHeaders
+  assertNotElem "reference_col" allHeaders
+  assertNotElem "amount_col" allHeaders
 
   -- 5. Verify completion email was sent with a valid download link
   assertEmailSentWithValidLink "test@example.com" csvLink
@@ -338,7 +338,7 @@ testGeneratesCsvWithNamedColumnConfig = do
   runSession pool
     $ Hasql.Session.sql
       "INSERT INTO smart_csv.column_config (name, config) \
-      \VALUES ('e2e_test_preset', '{\"smartCsvE2eTestData_reference\": \"Ref\", \"smartCsvE2eTestData_amount\": \"Amt\", \"smartCsvE2eTestData_createdAt\": \"Date\"}'::jsonb) \
+      \VALUES ('e2e_test_preset', '{\"reference_col\": {\"header\": \"Ref\"}, \"amount_col\": {\"header\": \"Amt\", \"decimalPlaces\": 0}, \"placed_at\": {\"header\": \"Date\"}}'::jsonb) \
       \ON CONFLICT (name) DO UPDATE SET config = EXCLUDED.config"
 
   -- 3. POST referencing the named preset
@@ -391,8 +391,8 @@ testGeneratesCsvWithNamedColumnConfig = do
 
   -- Verify raw column names are NOT present
   let allHeaders = concatMap Map.keys rows
-  assertNotElem "smartCsvE2eTestData_reference" allHeaders
-  assertNotElem "smartCsvE2eTestData_amount" allHeaders
+  assertNotElem "reference_col" allHeaders
+  assertNotElem "amount_col" allHeaders
 
   -- 6. Verify completion email was sent with a valid download link
   assertEmailSentWithValidLink "test@example.com" csvLink
@@ -505,9 +505,9 @@ testTableQueryBody :: Text
 testTableQueryBody =
   "query Q($rowLimit: Int!, $paginationCondition: SmartCsvE2eTestDataBoolExp!, $conditions: SmartCsvE2eTestDataBoolExp!) {\
   \ smartCsvE2eTestData(limit: $rowLimit, where: {_and: [$paginationCondition, $conditions]}) {\
-  \   amount\
-  \   createdAt\
-  \   reference\
+  \   amount_col: amount\
+  \   placed_at: createdAt\
+  \   reference_col: reference\
   \ }\
   \}"
 

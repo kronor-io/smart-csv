@@ -95,35 +95,61 @@ Once a request is accepted:
 
 1. The service inserts a record into the database, which triggers a state machine and enqueues a background job.
 2. The worker picks up the job, signs a JWT with the organization's claims, and begins paginating through the GraphQL endpoint.
-3. Each page of results is flattened from nested JSON into flat key-value rows (e.g. `customer.email` becomes `paymentRequests_customer_email`).
+3. Each page of results is converted into CSV rows using one column per selected field. Scalar fields are written directly, and nested object/array fields can be reduced to a single nested value via `columnConfig.dataPath`.
 4. Rows are streamed to S3 as a multipart upload in ~5 MB chunks.
 5. When complete, a presigned download URL is stored in the database and emailed to the recipient.
 
-### JSON Flattening
+### JSON To CSV
 
-Nested GraphQL responses are flattened using underscore-separated paths, prefixed with the root query field name.
+Each selected GraphQL field produces at most one CSV column.
 
 Given a GraphQL response row:
 
 ```json
 {
-  "waitToken": "wt_123",
+  "payment_request_id": "wt_123",
   "customer": {
-    "email": "user@example.com",
-    "name": "Ada"
-  }
+    "profile": {
+      "email": "user@example.com",
+      "name": "Ada"
+    }
+  },
+  "attempts": [
+    {
+      "payment": {
+        "cardType": "VISA"
+      }
+    },
+    {
+      "payment": {
+        "cardType": "MASTERCARD"
+      }
+    }
+  ]
 }
 ```
 
-With root field `paymentRequests`, the CSV columns become:
+With this column config:
 
-| paymentRequests_waitToken | paymentRequests_customer_email | paymentRequests_customer_name |
-|---------------------------|-------------------------------|-------------------------------|
-| wt_123 | user@example.com | Ada |
+```json
+{
+  "payment_request_id": { "header": "Payment Request ID" },
+  "customer": { "header": "Customer Email", "dataPath": "profile.email" },
+  "attempts": { "header": "Card Type", "dataPath": "payment.cardType" }
+}
+```
+
+The CSV columns become:
+
+| Payment Request ID | Customer Email | Card Type |
+|--------------------|----------------|-----------|
+| wt_123 | user@example.com | VISA,MASTERCARD |
 
 Type conversions:
 - Strings and numbers are used as-is
 - Booleans become `"True"` or `"False"`
 - Nulls become empty fields
-- Arrays use the first element only
-- Nested objects are recursively flattened
+- Arrays serialize every item and join the rendered values with commas
+- Without `dataPath`, arrays and objects are unwrapped recursively while there is only one possible path forward (all array elements, or an object with exactly one key)
+- If the traversal reaches an object with multiple keys and there is no `dataPath`, no value is emitted for that column
+- `decimalPlaces` truncates toward zero — `12.35` with `decimalPlaces: 1` becomes `12.3`
