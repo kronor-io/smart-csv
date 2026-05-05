@@ -30,6 +30,9 @@ csvify :: ColumnConfig -> Text -> Aeson.Value -> Map Text Csv.Field
 csvify colConfig _ (Aeson.Object (Aeson.KeyMap.toMapText -> obj)) =
   Map.unions $ mapMaybe extractColumn (Map.toList obj)
   where
+    withCommaDecimalSeparator :: String -> String
+    withCommaDecimalSeparator = map $ \char -> if char == '.' then ',' else char
+
     truncateScientific :: Int -> Scientific -> Scientific
     truncateScientific decimals sc =
       let factor = scientific 1 decimals
@@ -44,10 +47,10 @@ csvify colConfig _ (Aeson.Object (Aeson.KeyMap.toMapText -> obj)) =
     formatNumeric columnId scientificValue =
       case columnDecimalPlaces columnId colConfig of
         Just decimals ->
-          Csv.toField $ formatScientific Fixed (Just decimals) (truncateScientific decimals scientificValue)
+          Csv.toField $ withCommaDecimalSeparator $ formatScientific Fixed (Just decimals) (truncateScientific decimals scientificValue)
         Nothing
           | truncateScientific 0 scientificValue == scientificValue -> Csv.toField (truncate scientificValue :: Integer)
-          | otherwise -> Csv.toField $ formatScientific Fixed Nothing scientificValue
+          | otherwise -> Csv.toField $ withCommaDecimalSeparator $ formatScientific Fixed Nothing scientificValue
 
     renderLeaf :: Text -> Aeson.Value -> Maybe Csv.Field
     renderLeaf columnId (Aeson.String t) =
@@ -66,7 +69,8 @@ csvify colConfig _ (Aeson.Object (Aeson.KeyMap.toMapText -> obj)) =
     renderValue :: Text -> [Text] -> Aeson.Value -> Maybe Csv.Field
     renderValue columnId path (Aeson.Array array) =
       let renderedItems = mapMaybe renderArrayItem (toList array)
-       in Just (ByteString.Char8.intercalate "," renderedItems)
+          separator = if any (ByteString.Char8.elem ',') renderedItems then ";" else ","
+       in Just (ByteString.Char8.intercalate separator renderedItems)
       where
         renderArrayItem Aeson.Null = Nothing
         renderArrayItem value = do
