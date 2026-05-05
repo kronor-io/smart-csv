@@ -150,5 +150,6 @@ Type conversions:
 - Booleans become `"True"` or `"False"`
 - Nulls become empty fields
 - Arrays serialize every item and join the rendered values with commas
-- Without `dataPath`, arrays and objects are unwrapped recursively while there is only one possible path forward (first array element, or an object with exactly one key)
+- Without `dataPath`, arrays and objects are unwrapped recursively while there is only one possible path forward (all array elements, or an object with exactly one key)
 - If the traversal reaches an object with multiple keys and there is no `dataPath`, no value is emitted for that column
+- `decimalPlaces` truncates toward zero — `12.35` with `decimalPlaces: 1` becomes `12.3`

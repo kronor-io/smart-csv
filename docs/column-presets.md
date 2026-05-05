@@ -12,9 +12,13 @@ A column config is a JSON object where:
 - **Keys** are selected GraphQL field names or aliases
 - **Values** are objects with optional settings:
   - `header` — CSV header to display for that field
-  - `decimalPlaces` — number of decimal places for numeric formatting; if omitted, numeric values are kept as-is
-  - `dataPath` — dot-separated path used to extract a nested value from an
-    object or from the first element of an array
+  - `decimalPlaces` — number of decimal places for numeric formatting; if omitted,
+    numeric values are kept as-is. Note: this **truncates** toward zero rather than
+    rounding, so `12.35` with `decimalPlaces: 1` becomes `12.3` not `12.4`.
+  - `dataPath` — dot-separated path used to extract a nested value from an object.
+    When the *top-level field* is an array every element is processed and the results
+    are joined with commas. When an intermediate step in the path encounters an array,
+    only the **first element** is followed.
 
 Fields not mentioned in the config are included with their raw field name as the
 header.
@@ -22,8 +26,10 @@ header.
 If `dataPath` is omitted, Smart CSV still tries to resolve a scalar value by
 following the only available route through nested data:
 
-- Arrays serialize every element and join the rendered item values with commas
-- Objects are traversed only when they contain exactly one key
+- When the field value is an **array**, every element is rendered and joined with
+  commas (same as when `dataPath` is set)
+- When the field value is an **object with exactly one key**, traversal follows
+  that key automatically
 - Traversal stops once a scalar is found
 - If an object has multiple keys and no `dataPath` is provided, the column is
   left blank
