@@ -69,7 +69,7 @@ csvify colConfig _ (Aeson.Object (Aeson.KeyMap.toMapText -> obj)) =
     renderValue :: Text -> [Text] -> Aeson.Value -> Maybe Csv.Field
     renderValue columnId path (Aeson.Array array) =
       let renderedItems = mapMaybe renderArrayItem (toList array)
-       in Just (ByteString.Char8.intercalate "," renderedItems)
+       in Just (ByteString.Char8.intercalate ", " renderedItems)
       where
         renderArrayItem Aeson.Null = Nothing
         renderArrayItem value = do

@@ -17,7 +17,7 @@ A column config is a JSON object where:
     rounding, so `12.35` with `decimalPlaces: 1` becomes `12.3` not `12.4`.
   - `dataPath` — dot-separated path used to extract a nested value from an object.
     When the *top-level field* is an array every element is processed and the results
-    are joined with commas. When an intermediate step in the path encounters an array,
+    are joined with `, `. When an intermediate step in the path encounters an array,
     only the **first element** is followed.
 
 Fields not mentioned in the config are included with their raw field name as the
@@ -27,7 +27,7 @@ If `dataPath` is omitted, Smart CSV still tries to resolve a scalar value by
 following the only available route through nested data:
 
 - When the field value is an **array**, every element is rendered and joined with
-  commas (same as when `dataPath` is set)
+  `, ` (same as when `dataPath` is set)
 - When the field value is an **object with exactly one key**, traversal follows
   that key automatically
 - Traversal stops once a scalar is found

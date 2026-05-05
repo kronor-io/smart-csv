@@ -394,8 +394,8 @@ testCsvifyArrayValues = do
             )
           ]
       result = csvify config "orders" row
-  Map.lookup "Amounts" result @?= Just "12,3;56,7"
-  Map.lookup "Card Types" result @?= Just "VISA,MASTERCARD"
+  Map.lookup "Amounts" result @?= Just "12,3, 56,7"
+  Map.lookup "Card Types" result @?= Just "VISA, MASTERCARD"
 
 testCsvifyArrayIgnoresNulls :: IO ()
 testCsvifyArrayIgnoresNulls = do
@@ -419,8 +419,8 @@ testCsvifyArrayIgnoresNulls = do
             )
           ]
       result = csvify config "orders" row
-  Map.lookup "Amounts" result @?= Just "12,3;56,7"
-  Map.lookup "Card Types" result @?= Just "VISA,MASTERCARD"
+  Map.lookup "Amounts" result @?= Just "12,3, 56,7"
+  Map.lookup "Card Types" result @?= Just "VISA, MASTERCARD"
 
 testCsvifyArrayObjectNullFields :: IO ()
 testCsvifyArrayObjectNullFields = do
