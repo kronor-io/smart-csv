@@ -143,13 +143,13 @@ The CSV columns become:
 
 | Payment Request ID | Customer Email | Card Type |
 |--------------------|----------------|-----------|
-| wt_123 | user@example.com | VISA,MASTERCARD |
+| wt_123 | user@example.com | VISA, MASTERCARD |
 
 Type conversions:
 - Strings and numbers are used as-is
 - Booleans become `"True"` or `"False"`
 - Nulls become empty fields
-- Arrays serialize every item and join the rendered values with commas
+- Arrays serialize every item and join the rendered values with `, `
 - Without `dataPath`, arrays and objects are unwrapped recursively while there is only one possible path forward (all array elements, or an object with exactly one key)
 - If the traversal reaches an object with multiple keys and there is no `dataPath`, no value is emitted for that column
 - `decimalPlaces` truncates toward zero — `12.35` with `decimalPlaces: 1` becomes `12.3`

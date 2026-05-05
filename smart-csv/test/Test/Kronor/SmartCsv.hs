@@ -57,8 +57,8 @@ tests =
       testCase "csvify serializes arrays as comma-separated values" testCsvifyArrayValues,
       testCase "csvify ignores null values inside arrays" testCsvifyArrayIgnoresNulls,
       testCase "csvify ignores arrays of objects with only null selected fields" testCsvifyArrayObjectNullFields,
-      testCase "csvify applies custom decimal places per column" testCsvifyCustomDecimalPlaces,
-      testCase "csvify keeps numeric values as-is when decimalPlaces is unset" testCsvifyNumericPreservesOriginal,
+      testCase "csvify applies custom decimal places with comma decimals" testCsvifyCustomDecimalPlaces,
+      testCase "csvify uses comma decimals when decimalPlaces is unset" testCsvifyNumericPreservesOriginal,
       testCase "inferHeaders with empty config returns alias ids" testInferHeadersPassThrough,
       testCase "inferHeaders with custom config renames aliased columns" testInferHeadersCustomConfig,
       testCase "extractCursor returns error when pagination field is not selected" testExtractCursorMissingSelection,
@@ -394,8 +394,8 @@ testCsvifyArrayValues = do
             )
           ]
       result = csvify config "orders" row
-  Map.lookup "Amounts" result @?= Just "12.3,56.7"
-  Map.lookup "Card Types" result @?= Just "VISA,MASTERCARD"
+  Map.lookup "Amounts" result @?= Just "12,3, 56,7"
+  Map.lookup "Card Types" result @?= Just "VISA, MASTERCARD"
 
 testCsvifyArrayIgnoresNulls :: IO ()
 testCsvifyArrayIgnoresNulls = do
@@ -419,8 +419,8 @@ testCsvifyArrayIgnoresNulls = do
             )
           ]
       result = csvify config "orders" row
-  Map.lookup "Amounts" result @?= Just "12.3,56.7"
-  Map.lookup "Card Types" result @?= Just "VISA,MASTERCARD"
+  Map.lookup "Amounts" result @?= Just "12,3, 56,7"
+  Map.lookup "Card Types" result @?= Just "VISA, MASTERCARD"
 
 testCsvifyArrayObjectNullFields :: IO ()
 testCsvifyArrayObjectNullFields = do
@@ -455,8 +455,8 @@ testCsvifyCustomDecimalPlaces = do
             ("exchange_rate", Aeson.String "1.23456")
           ]
       result = csvify config "orders" row
-  Map.lookup "Amount" result @?= Just "12.345"
-  Map.lookup "Rate" result @?= Just "1.2345"
+  Map.lookup "Amount" result @?= Just "12,345"
+  Map.lookup "Rate" result @?= Just "1,2345"
 
 testCsvifyNumericPreservesOriginal :: IO ()
 testCsvifyNumericPreservesOriginal = do
@@ -473,7 +473,7 @@ testCsvifyNumericPreservesOriginal = do
             ("discount", Aeson.Number 10)
           ]
       result = csvify config "orders" row
-  Map.lookup "Price" result @?= Just "123.456"
+  Map.lookup "Price" result @?= Just "123,456"
   Map.lookup "Quantity" result @?= Just "50.10"
   Map.lookup "Discount" result @?= Just "10"
 
