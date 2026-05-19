@@ -42,6 +42,9 @@ tests =
           testCase "input json decoding accepts payload with inline columnConfig" testInputJsonDecodeWithColumnConfig,
           testCase "input json decoding accepts payload with columnConfigName" testInputJsonDecodeWithColumnConfigName,
           testCase "validation rejects both columnConfig and columnConfigName" testValidationRejectsBothColumnConfigs,
+          testCase "validation uses stricter per-root max range override" testValidationUsesStricterPerRootMaxRangeOverride,
+          testCase "validation uses looser per-root max range override" testValidationUsesLooserPerRootMaxRangeOverride,
+          testCase "validation falls back to default max range for unknown root" testValidationFallsBackToDefaultMaxRangeForUnknownRoot,
           testCase "verifyBearerToken rejects invalid signature" testVerifyBearerTokenInvalidSig,
           testCase "verifyBearerToken accepts valid token" testVerifyBearerTokenValid
         ],
@@ -195,6 +198,38 @@ testValidationRejectsBothColumnConfigs = do
           }
   Val.validateSmartGraphqlCsvGeneratorInput 33 Map.empty input
     @?= Left "Cannot specify both columnConfig and columnConfigName"
+
+testValidationUsesStricterPerRootMaxRangeOverride :: IO ()
+testValidationUsesStricterPerRootMaxRangeOverride = do
+  let input =
+        mkInput
+          { graphqlQueryVariables =
+              "{\"conditions\":{\"createdAt\":{\"_gte\":\"2026-03-01T00:00:00Z\",\"_lt\":\"2026-03-21T00:00:00Z\"}}}"
+          }
+  Val.validateSmartGraphqlCsvGeneratorInput 33 (Map.singleton "paymentRequests" 14) input
+    @?= Left "Invalid GraphQL query variables: The createdAt range is too wide. Maximum allowed range is 14 days."
+
+testValidationUsesLooserPerRootMaxRangeOverride :: IO ()
+testValidationUsesLooserPerRootMaxRangeOverride = do
+  let input =
+        mkInput
+          { graphqlQueryVariables =
+              "{\"conditions\":{\"createdAt\":{\"_gte\":\"2026-03-01T00:00:00Z\",\"_lt\":\"2026-03-21T00:00:00Z\"}}}"
+          }
+  case Val.validateSmartGraphqlCsvGeneratorInput 14 (Map.singleton "paymentRequests" 33) input of
+    Left err -> assertFailure err
+    Right _ -> pure ()
+
+testValidationFallsBackToDefaultMaxRangeForUnknownRoot :: IO ()
+testValidationFallsBackToDefaultMaxRangeForUnknownRoot = do
+  let input =
+        mkInput
+          { graphqlQueryVariables =
+              "{\"conditions\":{\"createdAt\":{\"_gte\":\"2026-03-01T00:00:00Z\",\"_lt\":\"2026-03-21T00:00:00Z\"}}}"
+          }
+  case Val.validateSmartGraphqlCsvGeneratorInput 33 (Map.singleton "Journal" 14) input of
+    Left err -> assertFailure err
+    Right _ -> pure ()
 
 testVerifyBearerTokenInvalidSig :: IO ()
 testVerifyBearerTokenInvalidSig = do

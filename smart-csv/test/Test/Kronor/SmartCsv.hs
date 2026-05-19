@@ -49,6 +49,9 @@ tests =
       testCase "classifyJsonDecodeError returns retryable action" testClassifyJsonDecodeError,
       testCase "validateGraphqlQueryBody accepts valid query" testValidateGraphqlQueryBodyValid,
       testCase "validateGraphqlQueryBody rejects missing paginationCondition" testValidateGraphqlQueryBodyMissingPaginationCondition,
+      testCase "validateGraphqlQueryBodyAndGetRootField returns root field name" testValidateGraphqlQueryBodyAndGetRootFieldValid,
+      testCase "validateGraphqlQueryBodyAndGetRootField ignores root alias" testValidateGraphqlQueryBodyAndGetRootFieldAlias,
+      testCase "validateGraphqlQueryBodyAndGetRootField rejects non-field root selection" testValidateGraphqlQueryBodyAndGetRootFieldRejectsNonFieldRoot,
       testCase "validateQueryVariables rejects too-wide range" testValidateQueryVariablesTooWide,
       testCase "validateQueryVariables accepts bounded range" testValidateQueryVariablesValid,
       testCase "parseColumnConfig converts JSON object to column config map" testParseColumnConfig,
@@ -266,6 +269,25 @@ gqlQueryText =
   \  } \
   \}"
 
+aliasedRootQueryText :: Text
+aliasedRootQueryText =
+  "query ($rowLimit: Int!, $paginationCondition: paymentRequests_bool_exp!) { \
+  \  journalEntries: paymentRequests(limit: $rowLimit, where: $paginationCondition) { \
+  \    payment_request_id: waitToken \
+  \  } \
+  \}"
+
+fragmentOnlyRootQueryText :: Text
+fragmentOnlyRootQueryText =
+  "query ($rowLimit: Int!, $paginationCondition: paymentRequests_bool_exp!) { \
+  \  ...RootFields \
+  \} \
+  \fragment RootFields on query_root { \
+  \  paymentRequests(limit: $rowLimit, where: $paginationCondition) { \
+  \    payment_request_id: waitToken \
+  \  } \
+  \}"
+
 fallbackCursorQueryText :: Text
 fallbackCursorQueryText =
   "query { orders { internalCursor } }"
@@ -321,6 +343,21 @@ testValidateGraphqlQueryBodyMissingPaginationCondition :: IO ()
 testValidateGraphqlQueryBodyMissingPaginationCondition =
   SmartCsvValidation.validateGraphqlQueryBody "query ($rowLimit: Int!) { paymentRequests(limit: $rowLimit) { payment_request_id: waitToken } }"
     @?= Left (pure "The query must define a paginationCondition variable.")
+
+testValidateGraphqlQueryBodyAndGetRootFieldValid :: IO ()
+testValidateGraphqlQueryBodyAndGetRootFieldValid =
+  SmartCsvValidation.validateGraphqlQueryBodyAndGetRootField gqlQueryText
+    @?= Right "paymentRequests"
+
+testValidateGraphqlQueryBodyAndGetRootFieldAlias :: IO ()
+testValidateGraphqlQueryBodyAndGetRootFieldAlias =
+  SmartCsvValidation.validateGraphqlQueryBodyAndGetRootField aliasedRootQueryText
+    @?= Right "paymentRequests"
+
+testValidateGraphqlQueryBodyAndGetRootFieldRejectsNonFieldRoot :: IO ()
+testValidateGraphqlQueryBodyAndGetRootFieldRejectsNonFieldRoot =
+  SmartCsvValidation.validateGraphqlQueryBodyAndGetRootField fragmentOnlyRootQueryText
+    @?= Left (pure "The query root must be a field selection.")
 
 testValidateQueryVariablesTooWide :: IO ()
 testValidateQueryVariablesTooWide =
