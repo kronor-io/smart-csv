@@ -41,11 +41,11 @@ validateSmartGraphqlCsvGeneratorInput maxRangeDays input = do
   when (Text.null input.recipient) $ Left "recipient email address must not be empty"
 
   let graphqlPaginationKey = JSON.fromText input.graphqlPaginationKey
-      queryRootField = case SmartCsvValidation.validateGraphqlQueryBodyAndGetRootField input.graphqlQueryBody of
-        Left validationError -> Left $ "Invalid GraphQL query body: " <> Text.unpack (Text.intercalate ", " $ toList validationError)
-        Right rootField -> Right rootField
 
-  _ <- queryRootField
+  case SmartCsvValidation.validateGraphqlQueryBodyAndGetRootField input.graphqlQueryBody of
+    Left validationError -> Left $ "Invalid GraphQL query body: " <> Text.unpack (Text.intercalate ", " $ toList validationError)
+    Right _ -> pure ()
+
   let maxRange = fromIntegral maxRangeDays * nominalDay
 
   -- Validate using SmartCsvValidation

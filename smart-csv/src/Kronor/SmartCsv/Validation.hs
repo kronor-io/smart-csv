@@ -55,12 +55,15 @@ validateGraphqlQueryBodyAndGetRootField graphqlQueryBody =
 validateQueryVariables :: NominalDiffTime -> Key.Key -> Text -> Either Text JSON.Value
 validateQueryVariables maxRange paginationKey queryVariablesText =
   case JSON.decode (LB.fromStrict (encodeUtf8 queryVariablesText)) of
-    Nothing -> Left "Invalid Json"
+    Nothing -> Left "Invalid JSON"
     Just queryVariables ->
       let limits = utcTimeLimits paginationKey queryVariables
        in case (limits.lo, limits.hi) of
             (Just lo, Just hi) ->
-              if diffUTCTime hi lo <= maxRange
+              if hi < lo
+                then Left ("The " <> Key.toText paginationKey <> " range is invalid: upper bound is earlier than lower bound.")
+                else
+                  if diffUTCTime hi lo <= maxRange
                     then Right queryVariables
                     else Left ("The " <> Key.toText paginationKey <> " range is too wide. Maximum allowed range is " <> tshow (ceiling (maxRange / nominalDay) :: Integer) <> " days.")
             _ ->
