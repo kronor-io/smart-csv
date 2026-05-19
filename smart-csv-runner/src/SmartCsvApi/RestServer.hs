@@ -54,5 +54,5 @@ generateCsvHandler generateHandler mAuthHeader input = do
   result <- liftIO $ generateHandler mAuthHeader input
   case result of
     Left err ->
-      throwError err400 {errBody = Aeson.encode $ Aeson.object ["error" Aeson..= err]}
+      throwError err400 {errBody = Aeson.encode $ Aeson.object ["message" Aeson..= err, "error" Aeson..= err]}
     Right res -> pure res

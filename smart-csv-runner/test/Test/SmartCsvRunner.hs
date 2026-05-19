@@ -1,11 +1,13 @@
 module Main (main) where
 
 import Data.Aeson qualified as Aeson
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Lazy.Char8 qualified as LB8
 import Data.List (isInfixOf)
 import Crypto.JOSE qualified
 import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Lazy qualified as LBS
+import Data.Map.Strict qualified as Map
 import Data.Text qualified as Text
 import Kronor.Db.Types.Bigint (Bigint (..))
 import Network.HTTP.Types.Status (status200, status400)
@@ -62,6 +64,9 @@ mkInput =
       columnConfigName = Nothing
     }
 
+testJwtSecret :: Text
+testJwtSecret = "k3BGs4nEF5IHgDi5XpupymE6maupyt2vHzyJRMoIBJo="
+
 mkAppEnv :: ApiEnv
 mkAppEnv =
   ApiEnv
@@ -69,7 +74,9 @@ mkAppEnv =
       envHttpManager = error "envHttpManager is not used by current handlers",
       envGraphqlUrl = "http://localhost:8080/v1/graphql",
       envPortalUrl = "http://localhost:3000",
-      envJwtSecret = "test-secret"
+      envJwtSecret = testJwtSecret,
+      envMaxRangeDaysDefault = 33,
+      envMaxRangeDaysByRoot = Map.empty
     }
 
 testHealthEndpoint :: IO ()
@@ -96,17 +103,17 @@ testGenerateEndpointHappyPath = do
 
 testGenerateEndpointValidationError :: IO ()
 testGenerateEndpointValidationError = do
-  response <- WaiTest.runSession (WaiTest.srequest (WaiTest.SRequest request (Aeson.encode invalidPayload))) (RestServer.mkApplication mkAppEnv)
+  response <- WaiTest.runSession (WaiTest.srequest (WaiTest.SRequest request (Aeson.encode mkInput))) app
   WaiTest.simpleStatus response @?= status400
   let body = WaiTest.simpleBody response
-  isJust (Aeson.decode body :: Maybe Aeson.Value) @?= True
-  -- Without a valid auth header, we get an auth error before validation
-  LB8.unpack body `contains` "Missing Authorization header"
+  case Aeson.decode body of
+    Just (Aeson.Object errObj) -> do
+      let expected = "Validation error: Invalid GraphQL query variables: The date range is too wide. Maximum allowed range is 33 days."
+      KeyMap.lookup "message" errObj @?= Just (Aeson.String expected)
+      KeyMap.lookup "error" errObj @?= Just (Aeson.String expected)
+    _ -> assertFailure ("Expected JSON object body, got: " <> LB8.unpack body)
   where
-    invalidPayload =
-      mkInput
-        { shardId = Bigint 0
-        }
+    app = RestServer.mkApplicationWith (\_ _ -> pure (Left "Validation error: Invalid GraphQL query variables: The date range is too wide. Maximum allowed range is 33 days."))
     request =
       defaultRequest
         { requestMethod = "POST",
@@ -132,6 +139,11 @@ testGenerateEndpointMissingAuth = do
   WaiTest.simpleStatus response @?= status400
   let body = WaiTest.simpleBody response
   LB8.unpack body `contains` "Missing Authorization header"
+  case Aeson.decode body of
+    Just (Aeson.Object errObj) -> do
+      KeyMap.lookup "message" errObj @?= Just (Aeson.String "Missing Authorization header")
+      KeyMap.lookup "error" errObj @?= Just (Aeson.String "Missing Authorization header")
+    _ -> assertFailure ("Expected JSON object body, got: " <> LB8.unpack body)
   where
     app = RestServer.mkApplicationWith (\mAuth input -> handleSmartGraphqlCsvGenerator' mAuth input)
     handleSmartGraphqlCsvGenerator' Nothing _ = pure $ Left "Missing Authorization header"
@@ -181,19 +193,19 @@ testValidationRejectsBothColumnConfigs = do
           { columnConfig = Just (Aeson.object [("field_a", Aeson.object [("header", Aeson.String "Column A")])]),
             columnConfigName = Just "payment_requests"
           }
-  Val.validateSmartGraphqlCsvGeneratorInput input
+  Val.validateSmartGraphqlCsvGeneratorInput 33 Map.empty input
     @?= Left "Cannot specify both columnConfig and columnConfigName"
 
 testVerifyBearerTokenInvalidSig :: IO ()
 testVerifyBearerTokenInvalidSig = do
-  let secret = "k3BGs4nEF5IHgDi5XpupymE6maupyt2vHzyJRMoIBJo=" -- base64(32 random bytes)
+  let secret = testJwtSecret -- base64(32 random bytes)
       token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0In0.invalidsignature"
   result <- verifyBearerToken secret ("Bearer " <> token)
   isLeft result @?= True
 
 testVerifyBearerTokenValid :: IO ()
 testVerifyBearerTokenValid = do
-  let secret = "k3BGs4nEF5IHgDi5XpupymE6maupyt2vHzyJRMoIBJo=" -- base64(32 random bytes)
+  let secret = testJwtSecret -- base64(32 random bytes)
   token <- signTestJwt secret "{\"sub\":\"test\"}"
   result <- verifyBearerToken secret ("Bearer " <> token)
   case result of

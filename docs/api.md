@@ -83,7 +83,11 @@ Content-Type: application/json
 - Be valid JSON
 - Contain a `conditions` object
 - Filter on the `graphqlPaginationKey` field in both directions using `_gte`/`_gt` and `_lt`/`_lte`
-- The date range must not exceed 33 days
+- The date range must not exceed the configured limit for the query root field (fallback default is 33 days)
+
+Range configuration is controlled by runtime env vars:
+- `MAX_RANGE_DAYS_DEFAULT` (integer, default `33`)
+- `MAX_RANGE_DAYS_BY_ROOT` (JSON object mapping GraphQL root field to max days, e.g. `{ "paymentRequests": 14, "smartCsvSettlement": 3 }`)
 
 **Other fields:**
 - `shardId` must be a positive integer

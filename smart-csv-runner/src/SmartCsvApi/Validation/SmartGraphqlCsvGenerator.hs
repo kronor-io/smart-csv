@@ -7,6 +7,8 @@ where
 import Data.Aeson (Value)
 import Data.Aeson qualified as JSON
 import Data.Aeson.Key qualified as JSON
+import Data.Map.Strict qualified as Map
+import Data.Time (nominalDay)
 import Kronor.Db.Models.Shard (ShardId (..))
 import Kronor.Db.Types.Bigint (Bigint (..))
 import Kronor.SmartCsv.Validation qualified as SmartCsvValidation
@@ -27,9 +29,11 @@ data SmartGraphqlCsvGenerator = SmartGraphqlCsvGenerator
 
 -- | Validate the SmartGraphqlCsvGeneratorInput
 validateSmartGraphqlCsvGeneratorInput ::
+  Int ->
+  Map.Map Text Int ->
   SmartGraphqlCsvGeneratorInput ->
   Either String SmartGraphqlCsvGenerator
-validateSmartGraphqlCsvGeneratorInput input = do
+validateSmartGraphqlCsvGeneratorInput defaultMaxRangeDays maxRangeDaysByRoot input = do
   -- Validate shard ID (must be positive)
   case input.shardId of
     Bigint n | n <= 0 -> Left "shardId must be a positive number"
@@ -39,16 +43,18 @@ validateSmartGraphqlCsvGeneratorInput input = do
   when (Text.null input.recipient) $ Left "recipient email address must not be empty"
 
   let graphqlPaginationKey = JSON.fromText input.graphqlPaginationKey
+      queryRootField = case SmartCsvValidation.validateGraphqlQueryBodyAndGetRootField input.graphqlQueryBody of
+        Left validationError -> Left $ "Invalid GraphQL query body: " <> Text.unpack (Text.intercalate ", " $ toList validationError)
+        Right rootField -> Right rootField
+
+  rootField <- queryRootField
+  let maxRangeDays = fromMaybe defaultMaxRangeDays (Map.lookup rootField maxRangeDaysByRoot)
+      maxRange = fromIntegral maxRangeDays * nominalDay
 
   -- Validate using SmartCsvValidation
-  queryVariables <- case SmartCsvValidation.validateQueryVariables graphqlPaginationKey input.graphqlQueryVariables of
-    Left _ -> Left "Invalid GraphQL query variables"
+  queryVariables <- case SmartCsvValidation.validateQueryVariables maxRange graphqlPaginationKey input.graphqlQueryVariables of
+    Left validationError -> Left $ "Invalid GraphQL query variables: " <> Text.unpack validationError
     Right vars -> Right vars
-
-  -- Validate GraphQL query body
-  case SmartCsvValidation.validateGraphqlQueryBody input.graphqlQueryBody of
-    Left _ -> Left "Invalid GraphQL query body"
-    Right () -> pure ()
 
   -- Cannot specify both inline config and named config
   when (isJust input.columnConfig && isJust input.columnConfigName)

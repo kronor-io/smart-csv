@@ -6,8 +6,8 @@ module SmartCsvApi.Handler.SmartGraphqlCsvGenerator
 where
 
 import Data.Aeson qualified as Aeson
-import Data.Text qualified as Text
 import Data.Aeson.Key qualified as Key
+import Data.Text qualified as Text
 import Data.UUID qualified as UUID
 import Data.UUID.V4 qualified as UUID
 import Hasql.Pool qualified
@@ -44,7 +44,7 @@ handleValidated ::
   IO (Either String SmartGraphqlCsvGeneratorResult)
 handleValidated apiEnv tokenClaims input = do
   -- Validate input
-  case Val.validateSmartGraphqlCsvGeneratorInput input of
+  case Val.validateSmartGraphqlCsvGeneratorInput apiEnv.envMaxRangeDaysDefault apiEnv.envMaxRangeDaysByRoot input of
     Left valErr ->
       pure $ Left ("Validation error: " <> valErr)
     Right validated -> do

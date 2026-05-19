@@ -324,12 +324,12 @@ testValidateGraphqlQueryBodyMissingPaginationCondition =
 
 testValidateQueryVariablesTooWide :: IO ()
 testValidateQueryVariablesTooWide =
-  SmartCsvValidation.validateQueryVariables "createdAt" "{\"conditions\":{\"createdAt\":{\"_gte\":\"2026-01-01T00:00:00Z\",\"_lt\":\"2026-03-01T00:00:00Z\"}}}"
-    @?= Left "The createdAt range is too wide."
+  SmartCsvValidation.validateQueryVariables (33 * 86400) "createdAt" "{\"conditions\":{\"createdAt\":{\"_gte\":\"2026-01-01T00:00:00Z\",\"_lt\":\"2026-03-01T00:00:00Z\"}}}"
+    @?= Left "The createdAt range is too wide. Maximum allowed range is 33 days."
 
 testValidateQueryVariablesValid :: IO ()
 testValidateQueryVariablesValid =
-  case SmartCsvValidation.validateQueryVariables "createdAt" "{\"conditions\":{\"createdAt\":{\"_gte\":\"2026-03-01T00:00:00Z\",\"_lt\":\"2026-03-15T00:00:00Z\"}}}" of
+  case SmartCsvValidation.validateQueryVariables (33 * 86400) "createdAt" "{\"conditions\":{\"createdAt\":{\"_gte\":\"2026-03-01T00:00:00Z\",\"_lt\":\"2026-03-15T00:00:00Z\"}}}" of
     Left err -> assertFailure (show err)
     Right _ -> pure ()
 
