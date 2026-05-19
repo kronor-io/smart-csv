@@ -10,6 +10,7 @@ import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as Aeson.Key
 import Data.Aeson.KeyMap qualified as Aeson.KeyMap
 import Data.Map.Strict qualified as Map
+import Data.Text qualified as Text
 import Data.Version qualified
 import Hasql.Connection.Setting qualified
 import Hasql.Connection.Setting.Connection qualified
@@ -409,7 +410,7 @@ parseMaxRangeDaysByRoot raw =
     Right parsed -> parsed
     Left err ->
       error
-        ( unpack
+      ( Text.unpack
             ( "Invalid MAX_RANGE_DAYS_BY_ROOT value: "
                 <> err
             )
@@ -443,7 +444,7 @@ parseMaxRangeDaysByRootEither raw =
       case Aeson.fromJSON valueJson of
         Aeson.Success x | x > 0 -> Right x
         Aeson.Success (_ :: Int) -> Left "must be a positive integer"
-        Aeson.Error err -> Left (pack err)
+        Aeson.Error err -> Left (Text.pack err)
 
 mkPool :: Int -> [Hasql.Connection.Setting.Setting] -> IO Pool.Pool
 mkPool poolSize connSettings =
