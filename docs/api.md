@@ -86,8 +86,8 @@ Content-Type: application/json
 - The date range must not exceed the configured limit for the query root field (fallback default is 33 days)
 
 Range configuration is controlled by runtime env vars:
-- `MAX_RANGE_DAYS_DEFAULT` (integer, default `33`)
-- `MAX_RANGE_DAYS_BY_ROOT` (JSON object mapping GraphQL root field to max days, e.g. `{ "paymentRequests": 14, "smartCsvSettlement": 3 }`)
+Per-root range overrides are stored in `smart_csv.query_range_limit`.
+If no row exists for a root field, the service falls back to the built-in default of 33 days.
 
 **Other fields:**
 - `shardId` must be a positive integer

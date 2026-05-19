@@ -82,9 +82,7 @@ startAllServices = do
               envHttpManager = httpManager,
               envGraphqlUrl = options.optionsGraphqlUrl,
               envPortalUrl = options.optionsPortalUrl,
-              envJwtSecret = options.optionsJwtSecret,
-              envMaxRangeDaysDefault = options.optionsMaxRangeDaysDefault,
-              envMaxRangeDaysByRoot = options.optionsMaxRangeDaysByRoot
+              envJwtSecret = options.optionsJwtSecret
             }
 
     let apiOpts =

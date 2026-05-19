@@ -12,3 +12,4 @@ smart_csv_statechart 2026-03-19T12:00:07Z Kronor Team <dev@kronor.io> # csv_repo
 smart_csv_functions 2026-03-19T12:00:08Z Kronor Team <dev@kronor.io> # Smart CSV functions and job schema
 smart_csv_triggers 2026-03-19T12:00:09Z Kronor Team <dev@kronor.io> # Smart CSV triggers
 column_config 2026-03-20T12:00:00Z Kronor Team <dev@kronor.io> # Column config presets and per-request overrides
+query_range_limit 2026-05-19T12:00:00Z Kronor Team <dev@kronor.io> # Per-root query range limit overrides

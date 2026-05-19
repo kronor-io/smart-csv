@@ -7,7 +7,6 @@ where
 import Data.Aeson (Value)
 import Data.Aeson qualified as JSON
 import Data.Aeson.Key qualified as JSON
-import Data.Map.Strict qualified as Map
 import Data.Time (nominalDay)
 import Kronor.Db.Models.Shard (ShardId (..))
 import Kronor.Db.Types.Bigint (Bigint (..))
@@ -30,10 +29,9 @@ data SmartGraphqlCsvGenerator = SmartGraphqlCsvGenerator
 -- | Validate the SmartGraphqlCsvGeneratorInput
 validateSmartGraphqlCsvGeneratorInput ::
   Int ->
-  Map.Map Text Int ->
   SmartGraphqlCsvGeneratorInput ->
   Either String SmartGraphqlCsvGenerator
-validateSmartGraphqlCsvGeneratorInput defaultMaxRangeDays maxRangeDaysByRoot input = do
+validateSmartGraphqlCsvGeneratorInput maxRangeDays input = do
   -- Validate shard ID (must be positive)
   case input.shardId of
     Bigint n | n <= 0 -> Left "shardId must be a positive number"
@@ -47,9 +45,8 @@ validateSmartGraphqlCsvGeneratorInput defaultMaxRangeDays maxRangeDaysByRoot inp
         Left validationError -> Left $ "Invalid GraphQL query body: " <> Text.unpack (Text.intercalate ", " $ toList validationError)
         Right rootField -> Right rootField
 
-  rootField <- queryRootField
-  let maxRangeDays = fromMaybe defaultMaxRangeDays (Map.lookup rootField maxRangeDaysByRoot)
-      maxRange = fromIntegral maxRangeDays * nominalDay
+  _ <- queryRootField
+  let maxRange = fromIntegral maxRangeDays * nominalDay
 
   -- Validate using SmartCsvValidation
   queryVariables <- case SmartCsvValidation.validateQueryVariables maxRange graphqlPaginationKey input.graphqlQueryVariables of

@@ -6,11 +6,6 @@ module SmartCsvRunner.Env
 where
 
 import Colog.Json qualified
-import Data.Aeson qualified as Aeson
-import Data.Aeson.Key qualified as Aeson.Key
-import Data.Aeson.KeyMap qualified as Aeson.KeyMap
-import Data.Map.Strict qualified as Map
-import Data.Text qualified as Text
 import Data.Version qualified
 import Hasql.Connection.Setting qualified
 import Hasql.Connection.Setting.Connection qualified
@@ -48,9 +43,7 @@ data Options = Options
     optionsApiHost :: String,
     optionsApiPort :: Int,
     optionsJwtSecret :: Text,
-    optionsLogLevel :: Text,
-    optionsMaxRangeDaysDefault :: Int,
-    optionsMaxRangeDaysByRoot :: Map.Map Text Int
+    optionsLogLevel :: Text
   }
 
 data DbConnInfo
@@ -93,8 +86,6 @@ instance HasParser Options where
       <*> apiPortP
       <*> jwtSecretP
       <*> logLevelP
-      <*> maxRangeDaysDefaultP
-      <*> maxRangeDaysByRootP
     where
       buildOptions
         dbHost
@@ -118,14 +109,11 @@ instance HasParser Options where
         optionsApiHost
         optionsApiPort
         optionsJwtSecret
-        optionsLogLevel
-        optionsMaxRangeDaysDefault
-        optionsMaxRangeDaysByRootRaw =
+        optionsLogLevel =
           let listenerSettings = resolveDbSettings dbHost dbPort listenerInfo
               dequeuerSettings = resolveDbSettings dbHost dbPort dequeuerInfo
               workerSettings = resolveDbSettings dbHost dbPort workerInfo
               replicaCsvSettings = resolveDbSettings dbHost dbPort replicaCsvInfo
-              optionsMaxRangeDaysByRoot = parseMaxRangeDaysByRoot optionsMaxRangeDaysByRootRaw
            in Options
                 { optionsListenerConn = pure listenerSettings,
                   optionsPgPoolDequeuer = liftIO $ do
@@ -145,9 +133,7 @@ instance HasParser Options where
                   optionsApiHost,
                   optionsApiPort,
                   optionsJwtSecret,
-                  optionsLogLevel,
-                  optionsMaxRangeDaysDefault,
-                  optionsMaxRangeDaysByRoot
+                  optionsLogLevel
                 }
 
       dbHostP =
@@ -381,70 +367,6 @@ instance HasParser Options where
             option,
             OptEnvConf.env "LOG_LEVEL"
           ]
-
-      maxRangeDaysDefaultP =
-        setting
-          [ help "default max filter range in days",
-            long "max-range-days-default",
-            value 33,
-            reader auto,
-            metavar "MAX_RANGE_DAYS_DEFAULT",
-            option,
-            OptEnvConf.env "MAX_RANGE_DAYS_DEFAULT"
-          ]
-
-      maxRangeDaysByRootP =
-        setting
-          [ help "per-root GraphQL max range days as JSON object, e.g. {\"paymentRequests\":14}",
-            long "max-range-days-by-root",
-            value "{}",
-            reader str,
-            metavar "MAX_RANGE_DAYS_BY_ROOT",
-            option,
-            OptEnvConf.env "MAX_RANGE_DAYS_BY_ROOT"
-          ]
-
-parseMaxRangeDaysByRoot :: Text -> Map.Map Text Int
-parseMaxRangeDaysByRoot raw =
-  case parseMaxRangeDaysByRootEither raw of
-    Right parsed -> parsed
-    Left err ->
-      error
-      ( Text.unpack
-            ( "Invalid MAX_RANGE_DAYS_BY_ROOT value: "
-                <> err
-            )
-        )
-
-parseMaxRangeDaysByRootEither :: Text -> Either Text (Map.Map Text Int)
-parseMaxRangeDaysByRootEither raw =
-  case Aeson.decodeStrict' (encodeUtf8 raw) of
-    Just (Aeson.Object obj) ->
-      fmap Map.fromList $
-        traverse parseEntry (Aeson.KeyMap.toList obj)
-    Just _ ->
-      Left "expected a JSON object mapping root names to positive integers"
-    Nothing ->
-      Left "invalid JSON"
-  where
-    parseEntry :: (Aeson.Key, Aeson.Value) -> Either Text (Text, Int)
-    parseEntry (key, valueJson) =
-      case parsePositiveInt valueJson of
-        Right days -> Right (Aeson.Key.toText key, days)
-        Left err ->
-          Left
-            ( "invalid value for root "
-                <> tshow (Aeson.Key.toText key)
-                <> ": "
-                <> err
-            )
-
-    parsePositiveInt :: Aeson.Value -> Either Text Int
-    parsePositiveInt valueJson =
-      case Aeson.fromJSON valueJson of
-        Aeson.Success x | x > 0 -> Right x
-        Aeson.Success (_ :: Int) -> Left "must be a positive integer"
-        Aeson.Error err -> Left (Text.pack err)
 
 mkPool :: Int -> [Hasql.Connection.Setting.Setting] -> IO Pool.Pool
 mkPool poolSize connSettings =

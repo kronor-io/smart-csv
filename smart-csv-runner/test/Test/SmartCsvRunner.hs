@@ -7,7 +7,6 @@ import Data.List (isInfixOf)
 import Crypto.JOSE qualified
 import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Lazy qualified as LBS
-import Data.Map.Strict qualified as Map
 import Data.Text qualified as Text
 import Kronor.Db.Types.Bigint (Bigint (..))
 import Network.HTTP.Types.Status (status200, status400)
@@ -42,9 +41,8 @@ tests =
           testCase "input json decoding accepts payload with inline columnConfig" testInputJsonDecodeWithColumnConfig,
           testCase "input json decoding accepts payload with columnConfigName" testInputJsonDecodeWithColumnConfigName,
           testCase "validation rejects both columnConfig and columnConfigName" testValidationRejectsBothColumnConfigs,
-          testCase "validation uses stricter per-root max range override" testValidationUsesStricterPerRootMaxRangeOverride,
-          testCase "validation uses looser per-root max range override" testValidationUsesLooserPerRootMaxRangeOverride,
-          testCase "validation falls back to default max range for unknown root" testValidationFallsBackToDefaultMaxRangeForUnknownRoot,
+          testCase "validation uses provided max range" testValidationUsesProvidedMaxRange,
+          testCase "validation accepts range within provided max range" testValidationAcceptsRangeWithinProvidedMaxRange,
           testCase "verifyBearerToken rejects invalid signature" testVerifyBearerTokenInvalidSig,
           testCase "verifyBearerToken accepts valid token" testVerifyBearerTokenValid
         ],
@@ -77,9 +75,7 @@ mkAppEnv =
       envHttpManager = error "envHttpManager is not used by current handlers",
       envGraphqlUrl = "http://localhost:8080/v1/graphql",
       envPortalUrl = "http://localhost:3000",
-      envJwtSecret = testJwtSecret,
-      envMaxRangeDaysDefault = 33,
-      envMaxRangeDaysByRoot = Map.empty
+      envJwtSecret = testJwtSecret
     }
 
 testHealthEndpoint :: IO ()
@@ -196,38 +192,27 @@ testValidationRejectsBothColumnConfigs = do
           { columnConfig = Just (Aeson.object [("field_a", Aeson.object [("header", Aeson.String "Column A")])]),
             columnConfigName = Just "payment_requests"
           }
-  Val.validateSmartGraphqlCsvGeneratorInput 33 Map.empty input
+  Val.validateSmartGraphqlCsvGeneratorInput 33 input
     @?= Left "Cannot specify both columnConfig and columnConfigName"
 
-testValidationUsesStricterPerRootMaxRangeOverride :: IO ()
-testValidationUsesStricterPerRootMaxRangeOverride = do
+testValidationUsesProvidedMaxRange :: IO ()
+testValidationUsesProvidedMaxRange = do
   let input =
         mkInput
           { graphqlQueryVariables =
               "{\"conditions\":{\"createdAt\":{\"_gte\":\"2026-03-01T00:00:00Z\",\"_lt\":\"2026-03-21T00:00:00Z\"}}}"
           }
-  Val.validateSmartGraphqlCsvGeneratorInput 33 (Map.singleton "paymentRequests" 14) input
+  Val.validateSmartGraphqlCsvGeneratorInput 14 input
     @?= Left "Invalid GraphQL query variables: The createdAt range is too wide. Maximum allowed range is 14 days."
 
-testValidationUsesLooserPerRootMaxRangeOverride :: IO ()
-testValidationUsesLooserPerRootMaxRangeOverride = do
+testValidationAcceptsRangeWithinProvidedMaxRange :: IO ()
+testValidationAcceptsRangeWithinProvidedMaxRange = do
   let input =
         mkInput
           { graphqlQueryVariables =
               "{\"conditions\":{\"createdAt\":{\"_gte\":\"2026-03-01T00:00:00Z\",\"_lt\":\"2026-03-21T00:00:00Z\"}}}"
           }
-  case Val.validateSmartGraphqlCsvGeneratorInput 14 (Map.singleton "paymentRequests" 33) input of
-    Left err -> assertFailure err
-    Right _ -> pure ()
-
-testValidationFallsBackToDefaultMaxRangeForUnknownRoot :: IO ()
-testValidationFallsBackToDefaultMaxRangeForUnknownRoot = do
-  let input =
-        mkInput
-          { graphqlQueryVariables =
-              "{\"conditions\":{\"createdAt\":{\"_gte\":\"2026-03-01T00:00:00Z\",\"_lt\":\"2026-03-21T00:00:00Z\"}}}"
-          }
-  case Val.validateSmartGraphqlCsvGeneratorInput 33 (Map.singleton "Journal" 14) input of
+  case Val.validateSmartGraphqlCsvGeneratorInput 33 input of
     Left err -> assertFailure err
     Right _ -> pure ()
 

@@ -25,8 +25,6 @@ data ApiEnv = ApiEnv
     envHttpManager :: Manager,
     envGraphqlUrl :: Text,
     envPortalUrl :: Text,
-    envJwtSecret :: Text,
-    envMaxRangeDaysDefault :: Int,
-    envMaxRangeDaysByRoot :: Map Text Int
+    envJwtSecret :: Text
   }
   deriving stock (Generic)
