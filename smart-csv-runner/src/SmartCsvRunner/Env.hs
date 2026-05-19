@@ -405,20 +405,45 @@ instance HasParser Options where
 
 parseMaxRangeDaysByRoot :: Text -> Map.Map Text Int
 parseMaxRangeDaysByRoot raw =
+  case parseMaxRangeDaysByRootEither raw of
+    Right parsed -> parsed
+    Left err ->
+      error
+        ( unpack
+            ( "Invalid MAX_RANGE_DAYS_BY_ROOT value: "
+                <> err
+            )
+        )
+
+parseMaxRangeDaysByRootEither :: Text -> Either Text (Map.Map Text Int)
+parseMaxRangeDaysByRootEither raw =
   case Aeson.decodeStrict' (encodeUtf8 raw) of
     Just (Aeson.Object obj) ->
-      Map.fromList
-        [ (Aeson.Key.toText key, days)
-          | (key, valueJson) <- Aeson.KeyMap.toList obj,
-            Just days <- [parsePositiveInt valueJson]
-        ]
-    _ -> mempty
+      fmap Map.fromList $
+        traverse parseEntry (Aeson.KeyMap.toList obj)
+    Just _ ->
+      Left "expected a JSON object mapping root names to positive integers"
+    Nothing ->
+      Left "invalid JSON"
   where
-    parsePositiveInt :: Aeson.Value -> Maybe Int
+    parseEntry :: (Aeson.Key, Aeson.Value) -> Either Text (Text, Int)
+    parseEntry (key, valueJson) =
+      case parsePositiveInt valueJson of
+        Right days -> Right (Aeson.Key.toText key, days)
+        Left err ->
+          Left
+            ( "invalid value for root "
+                <> tshow (Aeson.Key.toText key)
+                <> ": "
+                <> err
+            )
+
+    parsePositiveInt :: Aeson.Value -> Either Text Int
     parsePositiveInt valueJson =
       case Aeson.fromJSON valueJson of
-        Aeson.Success x | x > 0 -> Just x
-        _ -> Nothing
+        Aeson.Success x | x > 0 -> Right x
+        Aeson.Success (_ :: Int) -> Left "must be a positive integer"
+        Aeson.Error err -> Left (pack err)
 
 mkPool :: Int -> [Hasql.Connection.Setting.Setting] -> IO Pool.Pool
 mkPool poolSize connSettings =
