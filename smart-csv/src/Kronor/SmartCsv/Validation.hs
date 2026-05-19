@@ -2,6 +2,7 @@
 
 module Kronor.SmartCsv.Validation
   ( validateGraphqlQueryBody,
+    validateGraphqlQueryBodyAndGetRootField,
     validateQueryVariables,
   )
 where
@@ -17,12 +18,16 @@ import Data.Morpheus.Core (parseRequest)
 import Data.Morpheus.Internal.Ext (Result (..))
 import Data.Morpheus.Internal.Utils (IsMap (member))
 import Data.Morpheus.Types.IO (GQLRequest (..))
-import Data.Morpheus.Types.Internal.AST (ExecutableDocument (..), Operation (..))
+import Data.Morpheus.Types.Internal.AST (ExecutableDocument (..), Operation (..), RAW, Selection (..), unpackName)
+import Data.Text qualified as Text
 import Data.Time
 import RIO
 
 validateGraphqlQueryBody :: Text -> Either (NonEmpty Text) ()
-validateGraphqlQueryBody graphqlQueryBody =
+validateGraphqlQueryBody = void . validateGraphqlQueryBodyAndGetRootField
+
+validateGraphqlQueryBodyAndGetRootField :: Text -> Either (NonEmpty Text) Text
+validateGraphqlQueryBodyAndGetRootField graphqlQueryBody =
   case parseRequest (GQLRequest {query = graphqlQueryBody, operationName = Nothing, variables = Nothing}) of
     Failure errs -> Left $ NE.map tshow errs
     Success ExecutableDocument {operation = Operation {operationSelection, operationArguments = operationArgs}} warnings ->
@@ -31,27 +36,36 @@ validateGraphqlQueryBody graphqlQueryBody =
             Just ne -> Left (NE.map tshow ne)
             Nothing ->
               case rootSelections of
-                [_] ->
-                  if "rowLimit" `member` operationArgs
-                    then
-                      if "paginationCondition" `member` operationArgs
-                        then Right ()
-                        else Left $ NE.singleton "The query must define a paginationCondition variable."
-                    else Left $ NE.singleton "The query must define rowLimit to limit the number of rows ."
+                [rootSelection] ->
+                  case rootSelectionName rootSelection of
+                    Nothing -> Left $ NE.singleton "The query root must be a field selection."
+                    Just rootFieldName ->
+                      if "rowLimit" `member` operationArgs
+                        then
+                          if "paginationCondition" `member` operationArgs
+                            then Right rootFieldName
+                            else Left $ NE.singleton "The query must define a paginationCondition variable."
+                        else Left $ NE.singleton "The query must define rowLimit to limit the number of rows."
                 _ -> Left $ NE.singleton "The query must contain exactly one root field."
+  where
+    rootSelectionName :: Selection RAW -> Maybe Text
+    rootSelectionName Selection {selectionName} = Just (unpackName selectionName)
+    rootSelectionName _ = Nothing
 
-validateQueryVariables :: Key.Key -> Text -> Either Text JSON.Value
-validateQueryVariables paginationKey queryVariablesText =
+validateQueryVariables :: NominalDiffTime -> Key.Key -> Text -> Either Text JSON.Value
+validateQueryVariables maxRange paginationKey queryVariablesText =
   case JSON.decode (LB.fromStrict (encodeUtf8 queryVariablesText)) of
-    Nothing -> Left "Invalid Json"
+    Nothing -> Left "Invalid JSON"
     Just queryVariables ->
       let limits = utcTimeLimits paginationKey queryVariables
        in case (limits.lo, limits.hi) of
             (Just lo, Just hi) ->
-              let durationThreshold = 33 * nominalDay -- "one" month
-               in if diffUTCTime hi lo <= durationThreshold
+              if hi < lo
+                then Left ("The " <> Key.toText paginationKey <> " range is invalid: upper bound is earlier than lower bound.")
+                else
+                  if diffUTCTime hi lo <= maxRange
                     then Right queryVariables
-                    else Left ("The " <> Key.toText paginationKey <> " range is too wide.")
+                    else Left ("The " <> Key.toText paginationKey <> " range is too wide. Maximum allowed range is " <> tshow (ceiling (maxRange / nominalDay) :: Integer) <> " days.")
             _ ->
               Left
                 ( mconcat
@@ -120,7 +134,17 @@ utcTimeLimits k = \case
           KeyMap.lookup k cond
             >>= asObject
             >>= KeyMap.lookup op
-            >>= JSON.parseMaybe JSON.parseJSON
+            >>= parseTimeValue
+
+        parseTimeValue :: JSON.Value -> Maybe UTCTime
+        parseTimeValue val = JSON.parseMaybe JSON.parseJSON val <|> parseTimeString val
+
+        parseTimeString :: JSON.Value -> Maybe UTCTime
+        parseTimeString (JSON.String s) =
+          let str = Text.unpack s
+          in parseTimeM False defaultTimeLocale "%Y-%m-%d" str <|>
+             parseTimeM False defaultTimeLocale "%Y-%m-%dT%H:%M:%S%Q" str
+        parseTimeString _ = Nothing
 
     asObject :: JSON.Value -> Maybe (KeyMap.KeyMap JSON.Value)
     asObject (JSON.Object o) = Just o

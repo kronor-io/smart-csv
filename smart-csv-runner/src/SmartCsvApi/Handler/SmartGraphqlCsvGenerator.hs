@@ -6,19 +6,20 @@ module SmartCsvApi.Handler.SmartGraphqlCsvGenerator
 where
 
 import Data.Aeson qualified as Aeson
-import Data.Text qualified as Text
 import Data.Aeson.Key qualified as Key
+import Data.Text qualified as Text
 import Data.UUID qualified as UUID
 import Data.UUID.V4 qualified as UUID
 import Hasql.Pool qualified
 import Hasql.Transaction.Sessions (IsolationLevel (..), Mode (..), transaction)
 import Kronor.Db (statement)
 import Kronor.Db.Models.Shard (shardToInt64)
+import Kronor.SmartCsv.Validation qualified as SmartCsvValidation
 import RIO
 import SmartCsvApi.Auth (verifyBearerToken)
 import SmartCsvApi.Db.Statements qualified as Statements
 import SmartCsvApi.Env (ApiEnv (..))
-import SmartCsvApi.Types.SmartGraphqlCsvGenerator (SmartGraphqlCsvGeneratorInput, SmartGraphqlCsvGeneratorResult (..))
+import SmartCsvApi.Types.SmartGraphqlCsvGenerator (SmartGraphqlCsvGeneratorInput (..), SmartGraphqlCsvGeneratorResult (..))
 import SmartCsvApi.Validation.SmartGraphqlCsvGenerator as Val
 
 -- | Handle the smartGraphqlCsvGenerator mutation
@@ -43,39 +44,54 @@ handleValidated ::
   SmartGraphqlCsvGeneratorInput ->
   IO (Either String SmartGraphqlCsvGeneratorResult)
 handleValidated apiEnv tokenClaims input = do
-  -- Validate input
-  case Val.validateSmartGraphqlCsvGeneratorInput input of
-    Left valErr ->
-      pure $ Left ("Validation error: " <> valErr)
-    Right validated -> do
-      let pool = envDbPool apiEnv
-          shardId = shardToInt64 (Val.shardId validated)
+  let pool = envDbPool apiEnv
 
-      -- Generate a request ID for the transaction context
-      requestId <- UUID.toText <$> UUID.nextRandom
+  case SmartCsvValidation.validateGraphqlQueryBodyAndGetRootField input.graphqlQueryBody of
+    Left validationError ->
+      pure $ Left ("Validation error: Invalid GraphQL query body: " <> Text.unpack (Text.intercalate ", " $ toList validationError))
+    Right rootField -> do
+      maxRangeDaysResult <- Hasql.Pool.use pool $ do
+        transaction Serializable Read $ do
+          statement rootField Statements.selectQueryMaxRangeDaysByRoot
 
-      -- Write to database
-      dbResult <- Hasql.Pool.use pool $ do
-        transaction Serializable Write $ do
-          statement requestId Statements.setTransactionContext
-          statement
-            ( shardId,
-              Val.recipient validated,
-              Key.toText (Val.graphqlPaginationKey validated),
-              Val.graphqlQueryBody validated,
-              Val.graphqlQueryVariables validated,
-              tokenClaims,
-              Val.columnConfig validated,
-              Val.columnConfigName validated
-            )
-            Statements.insertSmartGraphqlCsvGenerator
-
-      case dbResult of
+      case maxRangeDaysResult of
         Left err ->
-          pure $ Left ("Database insert failed: " <> show err)
-        Right csvId ->
-          pure
-            $ Right
-            $ SmartGraphqlCsvGeneratorResult
-              { reportId = csvId
-              }
+          pure $ Left ("Database query failed: " <> show err)
+        Right mDays -> do
+          let maxRangeDays = maybe 33 fromIntegral mDays
+
+          -- Validate input
+          case Val.validateSmartGraphqlCsvGeneratorInput maxRangeDays input of
+            Left valErr ->
+              pure $ Left ("Validation error: " <> valErr)
+            Right validated -> do
+              let shardId = shardToInt64 (Val.shardId validated)
+
+              -- Generate a request ID for the transaction context
+              requestId <- UUID.toText <$> UUID.nextRandom
+
+              -- Write to database
+              dbResult <- Hasql.Pool.use pool $ do
+                transaction Serializable Write $ do
+                  statement requestId Statements.setTransactionContext
+                  statement
+                    ( shardId,
+                      Val.recipient validated,
+                      Key.toText (Val.graphqlPaginationKey validated),
+                      Val.graphqlQueryBody validated,
+                      Val.graphqlQueryVariables validated,
+                      tokenClaims,
+                      Val.columnConfig validated,
+                      Val.columnConfigName validated
+                    )
+                    Statements.insertSmartGraphqlCsvGenerator
+
+              case dbResult of
+                Left err ->
+                  pure $ Left ("Database insert failed: " <> show err)
+                Right csvId ->
+                  pure
+                    $ Right
+                    $ SmartGraphqlCsvGeneratorResult
+                      { reportId = csvId
+                      }

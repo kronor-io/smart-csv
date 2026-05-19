@@ -7,6 +7,7 @@ where
 import Data.Aeson (Value)
 import Data.Aeson qualified as JSON
 import Data.Aeson.Key qualified as JSON
+import Data.Time (nominalDay)
 import Kronor.Db.Models.Shard (ShardId (..))
 import Kronor.Db.Types.Bigint (Bigint (..))
 import Kronor.SmartCsv.Validation qualified as SmartCsvValidation
@@ -27,9 +28,10 @@ data SmartGraphqlCsvGenerator = SmartGraphqlCsvGenerator
 
 -- | Validate the SmartGraphqlCsvGeneratorInput
 validateSmartGraphqlCsvGeneratorInput ::
+  Int ->
   SmartGraphqlCsvGeneratorInput ->
   Either String SmartGraphqlCsvGenerator
-validateSmartGraphqlCsvGeneratorInput input = do
+validateSmartGraphqlCsvGeneratorInput maxRangeDays input = do
   -- Validate shard ID (must be positive)
   case input.shardId of
     Bigint n | n <= 0 -> Left "shardId must be a positive number"
@@ -40,15 +42,16 @@ validateSmartGraphqlCsvGeneratorInput input = do
 
   let graphqlPaginationKey = JSON.fromText input.graphqlPaginationKey
 
-  -- Validate using SmartCsvValidation
-  queryVariables <- case SmartCsvValidation.validateQueryVariables graphqlPaginationKey input.graphqlQueryVariables of
-    Left _ -> Left "Invalid GraphQL query variables"
-    Right vars -> Right vars
+  case SmartCsvValidation.validateGraphqlQueryBodyAndGetRootField input.graphqlQueryBody of
+    Left validationError -> Left $ "Invalid GraphQL query body: " <> Text.unpack (Text.intercalate ", " $ toList validationError)
+    Right _ -> pure ()
 
-  -- Validate GraphQL query body
-  case SmartCsvValidation.validateGraphqlQueryBody input.graphqlQueryBody of
-    Left _ -> Left "Invalid GraphQL query body"
-    Right () -> pure ()
+  let maxRange = fromIntegral maxRangeDays * nominalDay
+
+  -- Validate using SmartCsvValidation
+  queryVariables <- case SmartCsvValidation.validateQueryVariables maxRange graphqlPaginationKey input.graphqlQueryVariables of
+    Left validationError -> Left $ "Invalid GraphQL query variables: " <> Text.unpack validationError
+    Right vars -> Right vars
 
   -- Cannot specify both inline config and named config
   when (isJust input.columnConfig && isJust input.columnConfigName)

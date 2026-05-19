@@ -67,6 +67,7 @@ Content-Type: application/json
 
 ```json
 {
+  "message": "The query must define rowLimit to limit the number of rows.",
   "error": "The query must define rowLimit to limit the number of rows."
 }
 ```
@@ -83,7 +84,10 @@ Content-Type: application/json
 - Be valid JSON
 - Contain a `conditions` object
 - Filter on the `graphqlPaginationKey` field in both directions using `_gte`/`_gt` and `_lt`/`_lte`
-- The date range must not exceed 33 days
+- The date range must not exceed the configured limit for the query root field (fallback default is 33 days)
+
+Range configuration is stored in `smart_csv.query_range_limit`.
+If no row exists for a root field, the service falls back to the built-in default of 33 days.
 
 **Other fields:**
 - `shardId` must be a positive integer
