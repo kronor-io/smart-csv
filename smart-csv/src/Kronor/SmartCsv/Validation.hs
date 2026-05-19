@@ -45,7 +45,7 @@ validateGraphqlQueryBodyAndGetRootField graphqlQueryBody =
                           if "paginationCondition" `member` operationArgs
                             then Right rootFieldName
                             else Left $ NE.singleton "The query must define a paginationCondition variable."
-                        else Left $ NE.singleton "The query must define rowLimit to limit the number of rows ."
+                        else Left $ NE.singleton "The query must define rowLimit to limit the number of rows."
                 _ -> Left $ NE.singleton "The query must contain exactly one root field."
   where
     rootSelectionName :: Selection RAW -> Maybe Text
