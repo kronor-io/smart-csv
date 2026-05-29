@@ -216,7 +216,7 @@ genTokenFromClaims tokenClaims = do
           parsedClaims.tokenType
           parsedClaims.tokenId
       )
-      >>= either (retry . display) pure
+      >>= either (Job.giveupS logSource . display) pure
   return $ Text.encodeUtf8 token
 
 retry :: Utf8Builder -> Job env a
