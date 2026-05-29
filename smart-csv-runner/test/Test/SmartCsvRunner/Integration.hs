@@ -34,6 +34,7 @@ apiPort = 8000
 testShardId :: Int64
 testShardId = 1
 
+testJwtSecret :: Text
 testJwtSecret = "Q2x1cUZwQWpmOWVWY3kxZ1NucmNaV09JS2lHQm9MbDY1MUQ3VEUwbDREYz0="
 
 integrationTests :: TestTree
