@@ -9,6 +9,7 @@ import Data.ByteString.Lazy qualified as LBS
 import Data.Csv qualified as CSV
 import Data.Map.Strict qualified as Map
 import Data.String.Interpolate (i)
+import Data.Char (chr)
 import Hasql.Connection.Setting qualified
 import Hasql.Connection.Setting.Connection qualified
 import Hasql.Pool qualified
@@ -17,10 +18,10 @@ import Hasql.Session qualified
 import Hasql.TH (resultlessStatement, singletonStatement)
 import Network.HTTP.Simple qualified as HTTP
 import RIO
-import Data.Char (chr)
 import Data.Text qualified as Text
 import RIO.Time (UTCTime, addUTCTime, defaultTimeLocale, formatTime, getCurrentTime, secondsToNominalDiffTime)
 import RIO.Vector qualified as Vec
+import SmartCsvApi.Auth qualified as Auth
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
 
@@ -32,6 +33,9 @@ apiPort = 8000
 -- is irrelevant (the test creates its own table).
 testShardId :: Int64
 testShardId = 1
+
+testJwtSecret :: Text
+testJwtSecret = "k3BGs4nEF5IHgDi5XpupymE6maupyt2vHzyJRMoIBJo="
 
 integrationTests :: TestTree
 integrationTests =
@@ -434,8 +438,8 @@ postRestApi path body = do
     $ HTTP.setRequestHeader "Content-Type" ["application/json"] req
 
 postRestApiWithAuth :: Hasql.Pool.Pool -> Text -> Aeson.Value -> IO (HTTP.Response LBS.ByteString)
-postRestApiWithAuth pool path body = do
-  token <- signTestToken pool
+postRestApiWithAuth _pool path body = do
+  token <- signTestToken
   req <- HTTP.parseRequest (Text.unpack [i|http://127.0.0.1:#{apiPort}#{path}|])
   HTTP.httpLBS
     $ HTTP.setRequestMethod "POST"
@@ -443,31 +447,13 @@ postRestApiWithAuth pool path body = do
     $ HTTP.setRequestHeader "Content-Type" ["application/json"]
     $ HTTP.setRequestHeader "Authorization" [encodeUtf8 ("Bearer " <> token)] req
 
--- | Sign a test JWT using the database's pgjwt extension (same key Hasura uses).
-signTestToken :: Hasql.Pool.Pool -> IO Text
-signTestToken pool = do
-  result <-
-    Hasql.Pool.use pool
-      $ Hasql.Session.statement
-        (Just ("test@example.com" :: Text), Just testClaims, Just ("application" :: Text), Just ("test-tid" :: Text))
-        [singletonStatement|
-            select
-                sign(
-                    (json_build_object(
-                        'https://hasura.io/jwt/claims', $2::jsonb?,
-                        'iat', (select extract(epoch from now())),
-                        'exp', (select extract(epoch from now() + interval '1 hour')),
-                        'tid', $4::text?,
-                        'ttype', $3::text?,
-                        'tname', null,
-                        'associated_email', $1::text?
-                    )::jsonb)::json,
-                    current_setting('graphql.jwt_secret')
-                )::text
-        |]
+-- | Sign a test JWT in Haskell using the same base64-encoded HS256 secret as the service.
+signTestToken :: IO Text
+signTestToken = do
+  result <- Auth.signJwtFromClaims testJwtSecret (Just ("test@example.com" :: Text)) (Just testClaims) (Just ("application" :: Text)) (Just ("test-tid" :: Text))
   case result of
     Right token -> pure token
-    Left err -> error (show err)
+    Left err -> error (Text.unpack err)
   where
     testClaims :: Aeson.Value
     testClaims =

@@ -2,6 +2,7 @@ module Main (main) where
 
 import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as KeyMap
+import Data.ByteString qualified as BS
 import Data.ByteString.Lazy.Char8 qualified as LB8
 import Data.List (isInfixOf)
 import Crypto.JOSE qualified
@@ -241,7 +242,7 @@ signTestJwt secret payload = do
       jwk = Crypto.JOSE.fromOctets secretBytes :: Crypto.JOSE.JWK
       header = Crypto.JOSE.newJWSHeader (Crypto.JOSE.RequiredProtection, Crypto.JOSE.HS256)
   result <- Crypto.JOSE.runJOSE @Crypto.JOSE.Error $ do
-    jws <- Crypto.JOSE.signJWS (LBS.fromStrict payload) (Identity (header, jwk)) :: Crypto.JOSE.JOSE Crypto.JOSE.Error IO (Crypto.JOSE.CompactJWS Crypto.JOSE.JWSHeader)
+    jws <- Crypto.JOSE.signJWS (LBS.fromStrict (BS.copy payload)) (Identity (header, jwk)) :: Crypto.JOSE.JOSE Crypto.JOSE.Error IO (Crypto.JOSE.CompactJWS Crypto.JOSE.JWSHeader)
     pure (Crypto.JOSE.encodeCompact jws)
   case result of
     Left err -> error (show err)

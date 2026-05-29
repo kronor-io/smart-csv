@@ -35,6 +35,7 @@ import Kronor.SmartCsv.TokenClaims qualified as SmartCsvTokenClaims
 import RIO hiding ((%~), (.~), (^.), (^..), (^?))
 import RIO.List (headMaybe)
 import RIO.Vector qualified as Vector
+import SmartCsvApi.Auth qualified as SmartCsvAuth
 import SmartCsvRunner.AWS.Types
 import SmartCsvRunner.CsvGeneration.Generate qualified as Generate
 import SmartCsvRunner.Env (Options (..))
@@ -195,7 +196,7 @@ sendCsvDoneEmail recipient mUrl = do
       )
       SmartCsvStatements.enqueueCompletionEmail
 
-genTokenFromClaims :: Aeson.Value -> Job a ByteString
+genTokenFromClaims :: Aeson.Value -> Job (S3Config, Options) ByteString
 genTokenFromClaims tokenClaims = do
   parsedClaims <-
     either
@@ -205,13 +206,17 @@ genTokenFromClaims tokenClaims = do
       )
       pure
       (SmartCsvTokenClaims.parseTokenClaims tokenClaims)
+  options <- snd . Job.jobEnv <$> ask
   token <-
-    Db.readOr
-      (retry . displayShow)
-      ( Db.statement
-          (parsedClaims.associatedEmail, parsedClaims.hasuraClaims, parsedClaims.tokenType, parsedClaims.tokenId)
-          SmartCsvStatements.signJwtFromClaims
+    liftIO
+      ( SmartCsvAuth.signJwtFromClaims
+          options.optionsJwtSecret
+          parsedClaims.associatedEmail
+          parsedClaims.hasuraClaims
+          parsedClaims.tokenType
+          parsedClaims.tokenId
       )
+      >>= either (retry . display) pure
   return $ Text.encodeUtf8 token
 
 retry :: Utf8Builder -> Job env a
