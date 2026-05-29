@@ -2,6 +2,7 @@ module Main (main) where
 
 import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as KeyMap
+import Data.ByteString qualified as BS
 import Data.ByteString.Lazy.Char8 qualified as LB8
 import Data.List (isInfixOf)
 import Crypto.JOSE qualified
@@ -13,7 +14,7 @@ import Network.HTTP.Types.Status (status200, status400)
 import Network.Wai (defaultRequest, pathInfo, requestHeaders, requestMethod)
 import Network.Wai.Test qualified as WaiTest
 import RIO
-import SmartCsvApi.Auth (verifyBearerToken)
+import SmartCsvApi.Auth (signJwtFromClaims, verifyBearerToken)
 import SmartCsvApi.Env (ApiEnv (..))
 import SmartCsvApi.RestServer qualified as RestServer
 import SmartCsvApi.Types.SmartGraphqlCsvGenerator (SmartGraphqlCsvGeneratorInput (..), SmartGraphqlCsvGeneratorResult (..))
@@ -44,7 +45,8 @@ tests =
           testCase "validation uses provided max range" testValidationUsesProvidedMaxRange,
           testCase "validation accepts range within provided max range" testValidationAcceptsRangeWithinProvidedMaxRange,
           testCase "verifyBearerToken rejects invalid signature" testVerifyBearerTokenInvalidSig,
-          testCase "verifyBearerToken accepts valid token" testVerifyBearerTokenValid
+          testCase "verifyBearerToken accepts valid token" testVerifyBearerTokenValid,
+          testCase "signJwtFromClaims produces verifiable token claims" testSignJwtFromClaimsRoundtrip
         ],
       integrationTests
     ]
@@ -234,6 +236,32 @@ testVerifyBearerTokenValid = do
       let expected = Aeson.object ["sub" Aeson..= ("test" :: Text)]
       claims @?= expected
 
+testSignJwtFromClaimsRoundtrip :: IO ()
+testSignJwtFromClaimsRoundtrip = do
+  let secret = testJwtSecret
+      hasuraClaims =
+        Aeson.object
+          [ "x-hasura-default-role" Aeson..= ("smart-csv" :: Text),
+            "x-hasura-allowed-roles" Aeson..= (["smart-csv"] :: [Text]),
+            "x-hasura-shard-id" Aeson..= ("42" :: Text),
+            "x-hasura-user" Aeson..= ("ops@kronor.io" :: Text)
+          ]
+  signed <- signJwtFromClaims secret (Just "ops@kronor.io") (Just hasuraClaims) (Just "application") (Just "tid-123")
+  token <- case signed of
+    Left err -> assertFailure ("Expected token signing to succeed but got: " <> Text.unpack err) >> pure ""
+    Right jwt -> pure jwt
+  verified <- verifyBearerToken secret ("Bearer " <> token)
+  case verified of
+    Left err -> assertFailure ("Expected valid token but got: " <> Text.unpack err)
+    Right (Aeson.Object claims) -> do
+      KeyMap.lookup "associated_email" claims @?= Just (Aeson.String "ops@kronor.io")
+      KeyMap.lookup "ttype" claims @?= Just (Aeson.String "application")
+      KeyMap.lookup "tid" claims @?= Just (Aeson.String "tid-123")
+      KeyMap.lookup "https://hasura.io/jwt/claims" claims @?= Just hasuraClaims
+      isJust (KeyMap.lookup "iat" claims) @?= True
+      isJust (KeyMap.lookup "exp" claims) @?= True
+    Right other -> assertFailure ("Expected JWT claims object but got: " <> show other)
+
 -- | Create a minimal HS256 JWT for testing using jose's own signing.
 signTestJwt :: Text -> ByteString -> IO Text
 signTestJwt secret payload = do
@@ -241,7 +269,7 @@ signTestJwt secret payload = do
       jwk = Crypto.JOSE.fromOctets secretBytes :: Crypto.JOSE.JWK
       header = Crypto.JOSE.newJWSHeader (Crypto.JOSE.RequiredProtection, Crypto.JOSE.HS256)
   result <- Crypto.JOSE.runJOSE @Crypto.JOSE.Error $ do
-    jws <- Crypto.JOSE.signJWS (LBS.fromStrict payload) (Identity (header, jwk)) :: Crypto.JOSE.JOSE Crypto.JOSE.Error IO (Crypto.JOSE.CompactJWS Crypto.JOSE.JWSHeader)
+    jws <- Crypto.JOSE.signJWS (LBS.fromStrict (BS.copy payload)) (Identity (header, jwk)) :: Crypto.JOSE.JOSE Crypto.JOSE.Error IO (Crypto.JOSE.CompactJWS Crypto.JOSE.JWSHeader)
     pure (Crypto.JOSE.encodeCompact jws)
   case result of
     Left err -> error (show err)
