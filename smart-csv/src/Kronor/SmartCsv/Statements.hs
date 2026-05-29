@@ -5,7 +5,6 @@ module Kronor.SmartCsv.Statements (
     selectGeneratorConfig,
     selectColumnConfigByName,
     enqueueCompletionEmail,
-    signJwtFromClaims,
 )
 where
 
@@ -122,23 +121,4 @@ enqueueCompletionEmail =
             priority_ := $7::int,
             request_id_ := to_jsonb($6::text)
         )::text
-    |]
-
-
-signJwtFromClaims :: Statement (Maybe Text, Maybe Aeson.Value, Maybe Text, Maybe Text) Text
-signJwtFromClaims =
-    [singletonStatement|
-        select
-            sign(
-                (json_build_object(
-                    'https://hasura.io/jwt/claims', $2::jsonb?,
-                    'iat', (select extract(epoch from now())),
-                    'exp', (select extract(epoch from now() + interval '1 hour')),
-                    'tid', $4::text?,
-                    'ttype', $3::text?,
-                    'tname', null,
-                    'associated_email', $1::text?
-                )::jsonb)::json,
-                current_setting('graphql.jwt_secret')
-            )::text
     |]

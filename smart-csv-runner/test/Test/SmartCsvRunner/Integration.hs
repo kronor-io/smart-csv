@@ -144,7 +144,7 @@ testGeneratesCsvEndToEnd = do
             "graphqlQueryVariables" Aeson..= mkQueryVariables now oneHour
           ]
 
-  resp <- postRestApiWithAuth pool "/api/v1/csv/generate" restInput
+  resp <- postRestApiWithAuth "/api/v1/csv/generate" restInput
   let status = HTTP.getResponseStatusCode resp
   when (status /= 200)
     $ assertFailure [i|Expected HTTP 200 but got #{status}: #{decodeUtf8Lenient (LBS.toStrict (HTTP.getResponseBody resp))}|]
@@ -260,7 +260,7 @@ testGeneratesCsvWithInlineColumnConfig = do
             "columnConfig" Aeson..= inlineConfig
           ]
 
-  resp <- postRestApiWithAuth pool "/api/v1/csv/generate" restInput
+  resp <- postRestApiWithAuth "/api/v1/csv/generate" restInput
   let status = HTTP.getResponseStatusCode resp
   when (status /= 200)
     $ assertFailure [i|Expected HTTP 200 but got #{status}: #{decodeUtf8Lenient (LBS.toStrict (HTTP.getResponseBody resp))}|]
@@ -356,7 +356,7 @@ testGeneratesCsvWithNamedColumnConfig = do
             "columnConfigName" Aeson..= ("e2e_test_preset" :: Text)
           ]
 
-  resp <- postRestApiWithAuth pool "/api/v1/csv/generate" restInput
+  resp <- postRestApiWithAuth "/api/v1/csv/generate" restInput
   let status = HTTP.getResponseStatusCode resp
   when (status /= 200)
     $ assertFailure [i|Expected HTTP 200 but got #{status}: #{decodeUtf8Lenient (LBS.toStrict (HTTP.getResponseBody resp))}|]
@@ -437,8 +437,8 @@ postRestApi path body = do
     $ HTTP.setRequestBodyJSON body
     $ HTTP.setRequestHeader "Content-Type" ["application/json"] req
 
-postRestApiWithAuth :: Hasql.Pool.Pool -> Text -> Aeson.Value -> IO (HTTP.Response LBS.ByteString)
-postRestApiWithAuth _pool path body = do
+postRestApiWithAuth :: Text -> Aeson.Value -> IO (HTTP.Response LBS.ByteString)
+postRestApiWithAuth path body = do
   token <- signTestToken
   req <- HTTP.parseRequest (Text.unpack [i|http://127.0.0.1:#{apiPort}#{path}|])
   HTTP.httpLBS

@@ -14,7 +14,7 @@ import RIO
 
 signJwtFromClaims :: Text -> Maybe Text -> Maybe Aeson.Value -> Maybe Text -> Maybe Text -> IO (Either Text Text)
 signJwtFromClaims jwtSecret associatedEmail hasuraClaims tokenType tokenId = do
-    issuedAt <- round <$> getPOSIXTime
+    issuedAt <- floor <$> getPOSIXTime
     case prepareSecret jwtSecret of
         Left err -> pure (Left err)
         Right jwk -> do
