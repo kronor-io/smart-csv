@@ -32,6 +32,7 @@ data Options = Options
     optionsPgPoolWorker :: RIO Env Pool.Pool,
     optionsPgPoolReplicaCSV :: RIO Env Pool.Pool,
     optionsGraphqlUrl :: Text,
+    optionsGraphqlPageSize :: Int,
     optionsPortalUrl :: Text,
     optionsNumRetries :: Int,
     optionsMailHost :: Maybe Text,
@@ -74,6 +75,7 @@ instance HasParser Options where
       <*> workerPoolSizeP
       <*> replicaCsvPoolSizeP
       <*> graphqlUrlP
+      <*> graphqlPageSizeP
       <*> portalUrlP
       <*> numRetriesP
       <*> mailHostP
@@ -98,6 +100,7 @@ instance HasParser Options where
         workerPoolSize
         replicaCsvPoolSize
         optionsGraphqlUrl
+        optionsGraphqlPageSize
         optionsPortalUrl
         optionsNumRetries
         optionsMailHost
@@ -122,6 +125,7 @@ instance HasParser Options where
                   optionsPgPoolWorker = liftIO $ mkPool workerPoolSize workerSettings,
                   optionsPgPoolReplicaCSV = liftIO $ mkPool replicaCsvPoolSize replicaCsvSettings,
                   optionsGraphqlUrl,
+                  optionsGraphqlPageSize,
                   optionsPortalUrl,
                   optionsNumRetries,
                   optionsMailHost,
@@ -230,6 +234,17 @@ instance HasParser Options where
             metavar "GRAPHQL_URL",
             option,
             OptEnvConf.env "GRAPHQL_URL"
+          ]
+
+      graphqlPageSizeP =
+        setting
+          [ help "graphql page size for CSV generation",
+            long "graphql-page-size",
+            value 1000,
+            reader auto,
+            metavar "GRAPHQL_PAGE_SIZE",
+            option,
+            OptEnvConf.env "GRAPHQL_PAGE_SIZE"
           ]
 
       portalUrlP =

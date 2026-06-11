@@ -1,6 +1,6 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module SmartCsvRunner.MultipartUpload (ReportGenerationRow (..), ProcessingError (..), multiPartUploadFromPagination) where
+module SmartCsvRunner.MultipartUpload (EncodedCsvPage (..), ReportGenerationRow (..), ProcessingError (..), multiPartUploadFromPagination) where
 
 import Amazonka qualified as Aws
 import Amazonka.S3 qualified as Aws
@@ -9,12 +9,11 @@ import Amazonka.S3.Lens qualified as Aws.S3
 import Control.Lens.Operators ((#))
 import Control.Monad.Except (ExceptT (..), runExceptT)
 import Data.Binary.Builder qualified
-import Data.ByteString.Builder qualified as Builder
 import Data.ByteString.Lazy qualified
-import Data.Csv qualified
 import Data.Csv qualified as Csv
 import Data.Csv.Builder qualified
 import Data.List.NonEmpty qualified as NonEmpty
+import Data.String.Interpolate (iii)
 import Kronor.Tracer qualified
 import OpenTelemetry.Context (Context)
 import OpenTelemetry.Context.ThreadLocal (adjustContext, getContext)
@@ -22,7 +21,6 @@ import RIO
 import RIO.Orphans ()
 import RIO.Time
 import RIO.Vector qualified as Vector
-import RIO.Vector.Partial qualified as Vector
 import SmartCsvRunner.AWS (HasAwsEnv (..))
 import SmartCsvRunner.Job (Job)
 import SmartCsvRunner.ReportLink (ReportLinkStatus (..))
@@ -36,6 +34,14 @@ import Streamly.Internal.Data.Unfold qualified as Streamly.Data.Unfold
 
 data ProcessingError = EmptySet | InternalError Text | AwsError Aws.Error
     deriving stock (Show)
+
+
+data EncodedCsvPage cursor = EncodedCsvPage
+    { encodedRows :: Data.ByteString.Lazy.ByteString
+    , encodedRowBytes :: Int64
+    , lastCursor :: cursor
+    , rowCount :: Int
+    }
 
 
 data ReportGenerationRow cursor = ReportGenerationRow
@@ -53,14 +59,11 @@ data ReportGenerationRow cursor = ReportGenerationRow
 
 
 multiPartUploadFromPagination ::
-    forall a cursor env result.
-    Csv.ToNamedRecord a =>
+    forall cursor env result.
     -- generation progress tracker
     ReportGenerationRow (Maybe cursor) ->
     -- how to fetch transactions using the pagination cursor
-    (Maybe cursor -> Job env (Vector a)) ->
-    -- how to get the pagination cursor
-    (a -> cursor) ->
+    (Maybe cursor -> Job env (Maybe (EncodedCsvPage cursor))) ->
     -- header line for the CSV
     Vector Csv.Name ->
     -- fetch part entities
@@ -73,7 +76,6 @@ multiPartUploadFromPagination ::
 multiPartUploadFromPagination
     oldReportGenerationRow
     fetchPage
-    getCursor
     header
     fetchPartEntities
     updateProgress
@@ -81,7 +83,7 @@ multiPartUploadFromPagination
         do
             eMultiUpload <- runExceptT do
                 (rgr, uploadId) <- ExceptT $ createUpload oldReportGenerationRow
-                (rgr', uploadId') <- ExceptT $ uploadParts rgr fetchPage getCursor header uploadId updateProgress
+                (rgr', uploadId') <- ExceptT $ uploadParts rgr fetchPage header uploadId updateProgress
                 ExceptT $ completeUpload fetchPartEntities onSuccess rgr' uploadId'
 
             case eMultiUpload of
@@ -90,14 +92,11 @@ multiPartUploadFromPagination
 
 
 uploadParts ::
-    forall a cursor env.
-    Csv.ToNamedRecord a =>
+    forall cursor env.
     -- generation progress tracker
     ReportGenerationRow (Maybe cursor) ->
     -- how to fetch transactions using the pagination cursor
-    (Maybe cursor -> Job env (Vector a)) ->
-    -- how to get the pagination cursor
-    (a -> cursor) ->
+    (Maybe cursor -> Job env (Maybe (EncodedCsvPage cursor))) ->
     -- header line for the CSV
     Vector Csv.Name ->
     -- Upload Id
@@ -108,7 +107,6 @@ uploadParts ::
 uploadParts
     rgr
     fetchPage
-    getCursor
     header
     uploadId
     updateProgress =
@@ -123,15 +121,10 @@ uploadParts
         fetchTransactions ::
             Context ->
             Maybe cursor ->
-            Job env (Maybe ((Vector a, cursor), Maybe cursor))
+            Job env (Maybe (EncodedCsvPage cursor, Maybe cursor))
         fetchTransactions telemetryContext mCursor = do
             adjustContext (const telemetryContext)
-            transactions <- fetchPage mCursor
-            if Vector.null transactions
-                then return Nothing
-                else do
-                    let cursor = getCursor (Vector.last transactions)
-                    return (Just ((transactions, cursor), Just cursor))
+            fetchPage mCursor <&> fmap (\page -> (page, Just page.lastCursor))
 
         handleTransaction :: Job env (Maybe (Either ProcessingError (ReportGenerationRow cursor)))
         handleTransaction =
@@ -144,8 +137,8 @@ uploadParts
                         & Streamly.Data.Unfold.foldMany
                             ( Streamly.Data.Fold.teeWithFst
                                 (,)
-                                (writeAndChunkBoundary (Data.Csv.encodeByNameWith Data.Csv.defaultEncodeOptions{Csv.encIncludeHeader = False} header . Vector.toList . fst) 5_242_880)
-                                (Streamly.Data.Fold.foldl' (\acc v -> acc `seq` (acc + (Vector.length (fst v)))) 0)
+                                (writeAndChunkBoundary 5_242_880)
+                                (Streamly.Data.Fold.foldl' (\acc page -> acc `seq` (acc + page.rowCount)) 0)
                             )
                         & Streamly.Data.Unfold.takeWhile (isJust . fst)
                         & fmap
@@ -164,8 +157,10 @@ uploadParts
                         -- next part number
                         & Streamly.parMapM
                             (Streamly.maxThreads 3 . Streamly.ordered True)
-                            ( \(partNumber, ((lbs, cursorObject), nRows)) -> do
+                            ( \(partNumber, ((chunkBuilder, cursorObject), nRows)) -> do
                                 adjustContext (const telemetryContext)
+                                let chunkBytes = Data.ByteString.Lazy.length chunkBuilder
+                                logInfo [iii|Uploading CSV part #{partNumber} with #{nRows} rows and #{chunkBytes} bytes|]
                                 eresp <-
                                     uploadPart
                                         (Aws._BucketName # rgr.bucketName)
@@ -175,15 +170,15 @@ uploadParts
                                             ( if partNumber == 1
                                                 then
                                                     Data.Binary.Builder.toLazyByteString (Data.Csv.Builder.encodeHeader header)
-                                                        <> lbs
-                                                else lbs
+                                                        <> chunkBuilder
+                                                else chunkBuilder
                                             )
                                         )
                                 pure
                                     ( ( \etag ->
                                             rgr
                                                 { lastUploadedPart = Just partNumber
-                                                , lastPaginationKey = snd cursorObject
+                                                , lastPaginationKey = cursorObject
                                                 , partEntity = etag
                                                 , count = nRows
                                                 }
@@ -233,25 +228,23 @@ uploadParts
                     Just et -> pure $ Right (et ^. Aws.S3._ETag)
 
 
-data CurrentEncodedState a = NothingEncoded | CurrentEncodedState Builder.Builder Int64 a
+data CurrentEncodedState cursor = NothingEncoded | CurrentEncodedState Data.ByteString.Lazy.ByteString Int64 cursor
 
 
-writeAndChunkBoundary :: forall m a. MonadIO m => (a -> LByteString) -> Int64 -> Streamly.Data.Fold.Fold m a (Maybe (LByteString, a))
-writeAndChunkBoundary encoder byteSize = foldtM' step initial extract
+writeAndChunkBoundary :: forall m cursor. MonadIO m => Int64 -> Streamly.Data.Fold.Fold m (EncodedCsvPage cursor) (Maybe (Data.ByteString.Lazy.ByteString, cursor))
+writeAndChunkBoundary byteSize = foldtM' step initial extract
   where
     initial = pure (Streamly.Data.Fold.Partial NothingEncoded)
-    step NothingEncoded a = do
-        let newBuf = encoder a
-        pure $ Streamly.Data.Fold.Partial ((CurrentEncodedState (Builder.lazyByteString newBuf) (Data.ByteString.Lazy.length newBuf) a))
-    step (CurrentEncodedState encodedBuffer currentSize _) a = pure do
-        let newBuf = encoder a
-            updatedBuffer = encodedBuffer <> Builder.lazyByteString newBuf
-            newSize = currentSize + Data.ByteString.Lazy.length newBuf
+    step NothingEncoded page = do
+        pure $ Streamly.Data.Fold.Partial ((CurrentEncodedState page.encodedRows page.encodedRowBytes page.lastCursor))
+    step (CurrentEncodedState encodedBuffer currentSize _cursor) page = pure do
+        let updatedBuffer = encodedBuffer <> page.encodedRows
+            newSize = currentSize + page.encodedRowBytes
         if newSize >= byteSize
-            then Streamly.Data.Fold.Done (Just (Builder.toLazyByteString updatedBuffer, a))
-            else Streamly.Data.Fold.Partial (CurrentEncodedState updatedBuffer newSize a)
+            then Streamly.Data.Fold.Done (Just (updatedBuffer, page.lastCursor))
+            else Streamly.Data.Fold.Partial (CurrentEncodedState updatedBuffer newSize page.lastCursor)
     extract NothingEncoded = pure Nothing
-    extract (CurrentEncodedState updatedBuffer _ a) = pure (Just (Builder.toLazyByteString updatedBuffer, a))
+    extract (CurrentEncodedState updatedBuffer _ cursor) = pure (Just (updatedBuffer, cursor))
 
 
 completeUpload :: (Job env (Vector ByteString)) -> (ReportGenerationRow cursor -> Job env a) -> ReportGenerationRow cursor -> Text -> Job env (Either ProcessingError a)

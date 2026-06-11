@@ -19,7 +19,7 @@ import SmartCsvRunner.AWS.S3 qualified as Utilities
 import SmartCsvRunner.AWS.Types
 import SmartCsvRunner.Job (Job, giveupS, jobEnv)
 import SmartCsvRunner.Job qualified as Job
-import SmartCsvRunner.MultipartUpload (ProcessingError (..), ReportGenerationRow (..), multiPartUploadFromPagination)
+import SmartCsvRunner.MultipartUpload (EncodedCsvPage, ProcessingError (..), ReportGenerationRow (..), multiPartUploadFromPagination)
 import SmartCsvRunner.ReportLink (ReportLinkStatus (..), statusToText)
 
 logSource :: LogSource
@@ -29,19 +29,17 @@ tableName :: Text
 tableName = "smart_csv.generated_csv"
 
 generateCsv ::
-  forall env cursor r.
-  (Csv.ToNamedRecord r) =>
+  forall env cursor.
   (HasS3Config env) =>
   (HasCallStack) =>
-  (Maybe cursor -> Job env (Vector r)) ->
+  (Maybe cursor -> Job env (Maybe (EncodedCsvPage cursor))) ->
   Db.Transaction Bool ->
   Vector Csv.Name ->
-  (r -> cursor) ->
   (cursor -> Text) ->
   Text ->
   Payload ->
   Job env (Maybe Text)
-generateCsv fetchPage transactionsTest transactionsHeader getCursor toText fileKey payload@Payload {shardId, reportId, startDate, endDate, stateMachineId} = do
+generateCsv fetchPage transactionsTest transactionsHeader toText fileKey payload@Payload {shardId, reportId, startDate, endDate, stateMachineId} = do
   Db.writeOr (retryS <=< clarifyError tableName) do
     Kronor.Db.statement
       (toInt64 payload.shardId, stateMachineId, Aeson.toJSON payload)
@@ -82,7 +80,6 @@ generateCsv fetchPage transactionsTest transactionsHeader getCursor toText fileK
         multiPartUploadFromPagination
           reportGenerationRow
           fetchPage
-          getCursor
           transactionsHeader
           fetchPartEntities
           updateProgress
