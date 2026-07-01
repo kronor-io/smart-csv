@@ -82,8 +82,6 @@ library
   hs-source-dirs:   src
   build-depends:
       aeson
-    , attoparsec
-    , attoparsec-aeson
     , base                   >=4.11     && <10
     , bytestring
     , cassava
