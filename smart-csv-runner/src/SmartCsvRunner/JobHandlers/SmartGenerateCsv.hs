@@ -9,7 +9,6 @@ import Control.Lens
 import Data.Aeson qualified as Aeson
 import Data.Coerce (coerce)
 import Data.Csv qualified as Csv
-import Data.IORef qualified as IORef
 import Data.Map.Strict qualified as Map
 import Data.Morpheus.Core (parseRequest)
 import Data.Morpheus.Internal.Ext (Result (..))
@@ -115,7 +114,6 @@ generateCSV payload = do
           fileKey = s3Path <> fileName
           inferredHeadersFromGql = SmartCsv.inferHeaders resolvedColumnConfig inferredRootField
           emptyMap = Map.fromList ((,mempty) <$> inferredHeadersFromGql)
-      graphqlRequestCounter <- liftIO (IORef.newIORef @Int 0)
       authToken <- genTokenFromClaims tokenClaims
       httpManager <- liftIO $ Http.newManager Http.Tls.tlsManagerSettings
       let paginationFields = SmartCsvQuery.resolvePaginationFields gq
@@ -123,14 +121,12 @@ generateCSV payload = do
         tryAny
           $ subJobEnv fst
           $ Generate.generateCsv
-            (gqlQuery graphqlRequestCounter httpManager resolvedColumnConfig pId inferredRootField paginationFields authToken gq inferredRoot emptyMap (Vector.fromList (encodeUtf8 <$> inferredHeadersFromGql)) options.optionsGraphqlPageSize options.optionsGraphqlUrl)
+            (gqlQuery httpManager resolvedColumnConfig pId inferredRootField paginationFields authToken gq inferredRoot emptyMap (Vector.fromList (encodeUtf8 <$> inferredHeadersFromGql)) options.optionsGraphqlPageSize options.optionsGraphqlUrl)
             (pure True)
             (Vector.fromList (encodeUtf8 <$> inferredHeadersFromGql))
             SmartCsv.encodePaginationCursor
             fileKey
             generatedCsvPayload
-      graphqlRequestsMade <- liftIO (IORef.readIORef graphqlRequestCounter)
-      logInfo [iii|GraphQL requests made: #{graphqlRequestsMade}|]
       mSignedLink <- either throwM pure eSignedLink
       sendCsvDoneEmail recipient mSignedLink
     Failure errs -> do
@@ -145,10 +141,10 @@ generateCSV payload = do
             SmartCsvErrorHandling.Giveup msg ->
               Control.Exception.throw $ Job.NonRetryableException pId $ Job.StringyException logSource msg
         Right cursor -> cursor
-    gqlQuery :: IORef.IORef Int -> Http.Manager -> ColumnConfig -> Job.PayloadId -> Selection RAW -> NonEmpty SmartCsv.PaginationField -> ByteString -> GenericQuery -> Text -> CsvRow -> Vector Csv.Name -> Int -> Text -> Maybe SmartCsv.PaginationCursor -> Job S3Config (Maybe (EncodedCsvPage SmartCsv.PaginationCursor))
-    gqlQuery graphqlRequestCounter httpManager colConfig pId rootSelection paginationFields authToken GenericQuery {..} root emptyCsvRow header batchSize graphqlUrl mCursor = do
+    gqlQuery :: Http.Manager -> ColumnConfig -> Job.PayloadId -> Selection RAW -> NonEmpty SmartCsv.PaginationField -> ByteString -> GenericQuery -> Text -> CsvRow -> Vector Csv.Name -> Int -> Text -> Maybe SmartCsv.PaginationCursor -> Job S3Config (Maybe (EncodedCsvPage SmartCsv.PaginationCursor))
+    gqlQuery httpManager colConfig pId rootSelection paginationFields authToken GenericQuery {..} root emptyCsvRow header batchSize graphqlUrl mCursor = do
       let reqBody = SmartCsvQuery.buildRequestBody paginationFields batchSize mCursor GenericQuery {..}
-      eRes <- streamResponsePage graphqlRequestCounter httpManager graphqlUrl authToken reqBody colConfig root emptyCsvRow header
+      eRes <- streamResponsePage httpManager graphqlUrl authToken reqBody colConfig root emptyCsvRow header
       case eRes of
         Right page ->
           pure $ case page.lastRow of
@@ -166,14 +162,12 @@ generateCSV payload = do
             SmartCsvErrorHandling.Retry msg -> retry (display msg)
             SmartCsvErrorHandling.Giveup msg -> Job.giveupS logSource (display msg)
 
-    streamResponsePage :: IORef.IORef Int -> Http.Manager -> Text -> ByteString -> LByteString -> ColumnConfig -> Text -> CsvRow -> Vector Csv.Name -> Job S3Config (Either SmartCsvQuery.ResponseError DecodedResponsePage)
-    streamResponsePage graphqlRequestCounter httpManager graphqlUrl authToken reqBody colConfig root emptyCsvRow header = do
+    streamResponsePage :: Http.Manager -> Text -> ByteString -> LByteString -> ColumnConfig -> Text -> CsvRow -> Vector Csv.Name -> Job S3Config (Either SmartCsvQuery.ResponseError DecodedResponsePage)
+    streamResponsePage httpManager graphqlUrl authToken reqBody colConfig root emptyCsvRow header = do
       requestIdValue <- asks requestId
       request0 <-
         liftIO (Http.parseRequest (Text.unpack graphqlUrl))
           `catchAny` \_ -> Job.giveupS logSource "Could not build graphql url."
-      requestNumber <- liftIO (IORef.atomicModifyIORef' graphqlRequestCounter (\n -> let n' = n + 1 in (n', n')))
-      logInfo [iii|Issuing GraphQL request #{requestNumber}|]
       let request =
             request0
               { Http.method = "POST",
