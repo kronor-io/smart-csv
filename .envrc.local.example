@@ -1,0 +1,2 @@
+export FINANCE_SNAPSHOT_DB_URL="postgres://user@localhost:7435/finance?sslmode=verify-ca&sslrootcert=/path/to/root-ca.crt&sslcert=/path/to/client-cert.crt&sslkey=/path/to/client-key.key"
+export JWT_SECRET="base64-encoded-finance-hasura-jwt-secret"

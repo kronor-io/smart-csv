@@ -6,3 +6,6 @@ result
 .claude/
 .cabal-fmt-*
 .pre-commit-config.yaml
+benchmark-results/
+.envrc.local
+request*.json
