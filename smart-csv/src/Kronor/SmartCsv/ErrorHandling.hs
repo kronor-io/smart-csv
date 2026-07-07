@@ -6,6 +6,7 @@ module Kronor.SmartCsv.ErrorHandling (
     classifyCursorError,
     classifyTokenClaimsError,
     classifyJsonDecodeError,
+    classifyHttpStatusError,
 ) where
 
 import Kronor.SmartCsv.Pagination (CursorError (..))
@@ -57,3 +58,14 @@ classifyTokenClaimsError TokenClaimsNotObject =
 classifyJsonDecodeError :: String -> ErrorAction
 classifyJsonDecodeError err =
     Retry (fromString err)
+
+
+-- | Classify non-2xx HTTP responses from the GraphQL server.
+-- Server errors and throttling (5xx, 408, 429) are retryable.
+-- Other client errors indicate a bad request or configuration (non-retryable).
+classifyHttpStatusError :: Int -> ErrorAction
+classifyHttpStatusError status
+    | status >= 500 || status == 408 || status == 429 = Retry msg
+    | otherwise = Giveup msg
+  where
+    msg = "GraphQL request failed with HTTP status: " <> tshow status

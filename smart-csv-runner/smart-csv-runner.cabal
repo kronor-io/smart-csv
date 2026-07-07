@@ -138,6 +138,7 @@ library
     , hs-opentelemetry-sdk
     , http-client
     , http-client-tls
+    , http-types
     , immortal
     , iso8601-time
     , smart-csv
