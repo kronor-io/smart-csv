@@ -181,13 +181,18 @@ generateCSV payload = do
       parseResult <-
         liftIO
           $ Http.withResponse request httpManager
-          $ \response ->
-            if Http.Status.statusCode response.responseStatus < 200 || Http.Status.statusCode response.responseStatus >= 300
-              then pure (Left ("Unexpected HTTP status: " <> show (Http.Status.statusCode response.responseStatus)))
-              else SmartCsvQuery.decodeResponseChunkWith graphqlChunkTargetBytes colConfig root emptyCsvRow header (Http.responseBody response)
+          $ \response -> do
+            let status = Http.Status.statusCode response.responseStatus
+            if status < 200 || status >= 300
+              then pure (Left status)
+              else Right <$> SmartCsvQuery.decodeResponseChunkWith graphqlChunkTargetBytes colConfig root emptyCsvRow header (Http.responseBody response)
       case parseResult of
-        Right responsePage -> pure responsePage
-        Left err ->
+        Left status ->
+          case SmartCsvErrorHandling.classifyHttpStatusError status of
+            SmartCsvErrorHandling.Retry msg -> retry (display msg)
+            SmartCsvErrorHandling.Giveup msg -> Job.giveupS logSource (display msg)
+        Right (Right responsePage) -> pure responsePage
+        Right (Left err) ->
           case SmartCsvErrorHandling.classifyJsonDecodeError err of
             SmartCsvErrorHandling.Retry msg -> retry (display msg)
             SmartCsvErrorHandling.Giveup msg -> Job.giveupS logSource (display msg)

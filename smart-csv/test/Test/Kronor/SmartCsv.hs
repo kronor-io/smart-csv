@@ -9,7 +9,7 @@ import Data.Morpheus.Types.IO (GQLRequest (..))
 import Data.Morpheus.Types.Internal.AST (ExecutableDocument (..), Operation (..), RAW, Selection)
 import Data.Vector qualified as Vector
 import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnSettings (..), parseColumnConfig)
-import Kronor.SmartCsv.ErrorHandling (ErrorAction (..), classifyCursorError, classifyJsonDecodeError, classifyResponseError, classifyTokenClaimsError)
+import Kronor.SmartCsv.ErrorHandling (ErrorAction (..), classifyCursorError, classifyHttpStatusError, classifyJsonDecodeError, classifyResponseError, classifyTokenClaimsError)
 import Kronor.SmartCsv.Flatten (csvify, gatherSelectionNames)
 import Kronor.SmartCsv.Notification (CompletionEmail (..), EnqueueMeta (..), defaultEnqueueMeta, mkCompletionEmail)
 import Kronor.SmartCsv.Pagination (CursorError (..), PaginationCursor (..), PaginationDirection (..), PaginationField (..), extractCursor, inferHeaders)
@@ -55,6 +55,9 @@ tests =
       testCase "classifyCursorError with missing value returns non-retryable action" testClassifyCursorErrorMissing,
       testCase "classifyTokenClaimsError returns non-retryable action" testClassifyTokenClaimsError,
       testCase "classifyJsonDecodeError returns retryable action" testClassifyJsonDecodeError,
+      testCase "classifyHttpStatusError with server error returns retryable action" testClassifyHttpStatusErrorServerError,
+      testCase "classifyHttpStatusError with throttling returns retryable action" testClassifyHttpStatusErrorThrottled,
+      testCase "classifyHttpStatusError with client error returns non-retryable action" testClassifyHttpStatusErrorClientError,
       testCase "validateGraphqlQueryBody accepts valid query" testValidateGraphqlQueryBodyValid,
       testCase "validateGraphqlQueryBody rejects missing paginationCondition" testValidateGraphqlQueryBodyMissingPaginationCondition,
       testCase "validateGraphqlQueryBodyAndGetRootField returns root field name" testValidateGraphqlQueryBodyAndGetRootFieldValid,
@@ -528,6 +531,21 @@ testClassifyJsonDecodeError :: IO ()
 testClassifyJsonDecodeError =
   classifyJsonDecodeError "trailing junk"
     @?= Retry "trailing junk"
+
+testClassifyHttpStatusErrorServerError :: IO ()
+testClassifyHttpStatusErrorServerError =
+  classifyHttpStatusError 502
+    @?= Retry "GraphQL request failed with HTTP status: 502"
+
+testClassifyHttpStatusErrorThrottled :: IO ()
+testClassifyHttpStatusErrorThrottled =
+  classifyHttpStatusError 429
+    @?= Retry "GraphQL request failed with HTTP status: 429"
+
+testClassifyHttpStatusErrorClientError :: IO ()
+testClassifyHttpStatusErrorClientError =
+  classifyHttpStatusError 401
+    @?= Giveup "GraphQL request failed with HTTP status: 401"
 
 testValidateGraphqlQueryBodyValid :: IO ()
 testValidateGraphqlQueryBodyValid =

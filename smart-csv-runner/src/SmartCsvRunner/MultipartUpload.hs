@@ -235,8 +235,10 @@ writeAndChunkBoundary :: forall m cursor. MonadIO m => Int64 -> Streamly.Data.Fo
 writeAndChunkBoundary byteSize = foldtM' step initial extract
   where
     initial = pure (Streamly.Data.Fold.Partial NothingEncoded)
-    step NothingEncoded page = do
-        pure $ Streamly.Data.Fold.Partial ((CurrentEncodedState page.encodedRows page.encodedRowBytes page.lastCursor))
+    step NothingEncoded page = pure do
+        if page.encodedRowBytes >= byteSize
+            then Streamly.Data.Fold.Done (Just (page.encodedRows, page.lastCursor))
+            else Streamly.Data.Fold.Partial (CurrentEncodedState page.encodedRows page.encodedRowBytes page.lastCursor)
     step (CurrentEncodedState encodedBuffer currentSize _cursor) page = pure do
         let updatedBuffer = encodedBuffer <> page.encodedRows
             newSize = currentSize + page.encodedRowBytes

@@ -149,27 +149,27 @@ tokenDecodePage mMaxChunkBytes colConfig root emptyCsvRow header lbs =
         | otherwise -> skipValue valueTokens >>= dataLevel
 
     foldRows :: TkArray k String -> Either String (Either ResponseError DecodedResponsePage)
-    foldRows = go mempty 0 0 Nothing
+    foldRows = go [] 0 0 Nothing
       where
-        go !encoded !encodedBytes !count !mLastRow = \case
+        go !revEncoded !encodedBytes !count !mLastRow = \case
           TkArrayErr err -> Left err
-          TkArrayEnd _ -> Right (Right (mkPage encoded encodedBytes count mLastRow))
+          TkArrayEnd _ -> Right (Right (mkPage revEncoded encodedBytes count mLastRow))
           TkItem rowTokens -> do
             (rowValue, rest) <- tokensToValue rowTokens
             let row = csvify colConfig root rowValue `Map.union` emptyCsvRow
                 encodedRow = Builder.toLazyByteString (Csv.Builder.encodeNamedRecordWith Csv.defaultEncodeOptions header row)
-                encoded' = encoded <> encodedRow
+                revEncoded' = encodedRow : revEncoded
                 encodedBytes' = encodedBytes + LByteString.length encodedRow
                 count' = count + 1
             case mMaxChunkBytes of
               Just maxChunkBytes
                 | encodedBytes' >= maxChunkBytes ->
-                    Right (Right (mkPage encoded' encodedBytes' count' (Just row)))
-              _ -> go encoded' encodedBytes' count' (Just row) rest
+                    Right (Right (mkPage revEncoded' encodedBytes' count' (Just row)))
+              _ -> go revEncoded' encodedBytes' count' (Just row) rest
 
-    mkPage encoded encodedBytes count mLastRow =
+    mkPage revEncoded encodedBytes count mLastRow =
       DecodedResponsePage
-        { encodedRows = encoded,
+        { encodedRows = LByteString.concat (reverse revEncoded),
           encodedRowBytes = encodedBytes,
           rowCount = count,
           lastRow = mLastRow
