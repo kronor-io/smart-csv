@@ -79,6 +79,7 @@ Pass the config directly in the request body using the `columnConfig` field:
   "shardId": 42,
   "recipient": "ops@example.com",
   "graphqlPaginationKey": "createdAt",
+  "orderBy": [{ "createdAt": "DESC" }],
   "graphqlQueryBody": "...",
   "graphqlQueryVariables": "...",
   "columnConfig": {

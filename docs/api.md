@@ -24,6 +24,7 @@ Submits a GraphQL query for CSV generation. The service processes the query asyn
 | `shardId` | integer | yes | Tenant identifier (must be positive) |
 | `recipient` | string | yes | Email address to receive the download link |
 | `graphqlPaginationKey` | string | yes | Field used for cursor-based pagination (e.g. `"createdAt"`) |
+| `orderBy` | array | no | Hasura `orderBy` value used for sorting and cursor fields. Supports nested fields (e.g. `{ "customer": { "createdAt": "DESC" } }`). |
 | `graphqlQueryBody` | string | yes | GraphQL query string |
 | `graphqlQueryVariables` | string | yes | JSON-encoded query variables |
 | `columnConfig` | object | no | Inline column mapping (see [Column Presets](column-presets.md)) |
@@ -38,7 +39,11 @@ Submits a GraphQL query for CSV generation. The service processes the query asyn
   "shardId": 42,
   "recipient": "ops@example.com",
   "graphqlPaginationKey": "createdAt",
-  "graphqlQueryBody": "query ($rowLimit: Int!, $paginationCondition: payment_requests_bool_exp!, $conditions: payment_requests_bool_exp!) { paymentRequests(limit: $rowLimit, where: {_and: [$paginationCondition, $conditions]}) { waitToken createdAt amount currency } }",
+  "orderBy": [
+    { "createdAt": "DESC" },
+    { "transactionNo": "DESC" }
+  ],
+  "graphqlQueryBody": "query ($rowLimit: Int!, $paginationCondition: payment_requests_bool_exp!, $conditions: payment_requests_bool_exp!, $orderBy: [payment_requests_order_by!]) { paymentRequests(limit: $rowLimit, where: {_and: [$paginationCondition, $conditions]}, orderBy: $orderBy) { waitToken createdAt transactionNo amount currency } }",
   "graphqlQueryVariables": "{\"conditions\":{\"createdAt\":{\"_gte\":\"2026-03-01T00:00:00Z\",\"_lt\":\"2026-03-15T00:00:00Z\"}}}"
 }
 ```
@@ -85,6 +90,8 @@ Content-Type: application/json
 - Contain a `conditions` object
 - Filter on the `graphqlPaginationKey` field in both directions using `_gte`/`_gt` and `_lt`/`_lte`
 - The date range must not exceed the configured limit for the query root field (fallback default is 33 days)
+
+When `orderBy` is supplied, the worker injects it into GraphQL variables for every page and uses the ordered fields as the cursor. The first ordered field must match `graphqlPaginationKey`; for nested fields use dot notation in `graphqlPaginationKey`, such as `customer.createdAt`.
 
 Range configuration is stored in `smart_csv.query_range_limit`.
 If no row exists for a root field, the service falls back to the built-in default of 33 days.

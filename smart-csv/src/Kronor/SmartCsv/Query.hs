@@ -36,11 +36,19 @@ import RIO
 data GenericQuery
   = GenericQuery
   { paginationKey :: Maybe Text,
+    orderBy :: Maybe Aeson.Value,
     query :: Text,
     variables :: Aeson.Value
   }
   deriving stock (Generic)
-  deriving anyclass (Aeson.ToJSON)
+
+instance Aeson.ToJSON GenericQuery where
+  toJSON GenericQuery {paginationKey, query, variables} =
+    Aeson.object
+      [ "paginationKey" Aeson..= paginationKey,
+        "query" Aeson..= query,
+        "variables" Aeson..= variables
+      ]
 
 data ResponseError
   = ResponseContainsError Text
@@ -52,7 +60,8 @@ data DecodedResponsePage = DecodedResponsePage
   { encodedRows :: LByteString.ByteString,
     encodedRowBytes :: Int64,
     rowCount :: Int,
-    lastRow :: Maybe (Map Text Csv.Field)
+    lastRow :: Maybe (Map Text Csv.Field),
+    lastRawRow :: Maybe Aeson.Value
   }
 
 decodedResponsePageBytes :: DecodedResponsePage -> LByteString
@@ -62,11 +71,16 @@ resolvePaginationKey :: GenericQuery -> Aeson.Key
 resolvePaginationKey gq = maybe "createdAt" Aeson.Key.fromText gq.paginationKey
 
 resolvePaginationFields :: GenericQuery -> NonEmpty PaginationField
-resolvePaginationFields gq = SmartCsvPagination.resolvePaginationFields (resolvePaginationKey gq) gq.variables
+resolvePaginationFields gq = SmartCsvPagination.resolvePaginationFields (resolvePaginationKey gq) (applyOrderBy gq.orderBy gq.variables)
 
 buildRequestBody :: NonEmpty PaginationField -> Int -> Maybe PaginationCursor -> GenericQuery -> LByteString
 buildRequestBody paginationFields batchSize mCursor gq =
-  Aeson.encode gq {variables = SmartCsvPagination.setPaginationValues paginationFields batchSize mCursor gq.variables}
+  Aeson.encode gq {variables = applyOrderBy gq.orderBy (SmartCsvPagination.setPaginationValues paginationFields batchSize mCursor gq.variables)}
+
+applyOrderBy :: Maybe Aeson.Value -> Aeson.Value -> Aeson.Value
+applyOrderBy Nothing queryVariables = queryVariables
+applyOrderBy (Just orderBy) (Aeson.Object obj) = Aeson.Object (Aeson.KeyMap.insert "orderBy" orderBy obj)
+applyOrderBy (Just _) queryVariables = queryVariables
 
 -- | Decode a full GraphQL response (all rows) from a strict 'ByteString'.
 decodeResponsePage :: ColumnConfig -> Text -> Map Text Csv.Field -> Vector Csv.Name -> ByteString -> Either String (Either ResponseError DecodedResponsePage)
@@ -149,11 +163,11 @@ tokenDecodePage mMaxChunkBytes colConfig root emptyCsvRow header lbs =
         | otherwise -> skipValue valueTokens >>= dataLevel
 
     foldRows :: TkArray k String -> Either String (Either ResponseError DecodedResponsePage)
-    foldRows = go [] 0 0 Nothing
+    foldRows = go [] 0 0 Nothing Nothing
       where
-        go !revEncoded !encodedBytes !count !mLastRow = \case
+        go !revEncoded !encodedBytes !count !mLastRow !mLastRawRow = \case
           TkArrayErr err -> Left err
-          TkArrayEnd _ -> Right (Right (mkPage revEncoded encodedBytes count mLastRow))
+          TkArrayEnd _ -> Right (Right (mkPage revEncoded encodedBytes count mLastRow mLastRawRow))
           TkItem rowTokens -> do
             (rowValue, rest) <- tokensToValue rowTokens
             let row = csvify colConfig root rowValue `Map.union` emptyCsvRow
@@ -164,15 +178,16 @@ tokenDecodePage mMaxChunkBytes colConfig root emptyCsvRow header lbs =
             case mMaxChunkBytes of
               Just maxChunkBytes
                 | encodedBytes' >= maxChunkBytes ->
-                    Right (Right (mkPage revEncoded' encodedBytes' count' (Just row)))
-              _ -> go revEncoded' encodedBytes' count' (Just row) rest
+                    Right (Right (mkPage revEncoded' encodedBytes' count' (Just row) (Just rowValue)))
+              _ -> go revEncoded' encodedBytes' count' (Just row) (Just rowValue) rest
 
-    mkPage revEncoded encodedBytes count mLastRow =
+    mkPage revEncoded encodedBytes count mLastRow mLastRawRow =
       DecodedResponsePage
         { encodedRows = LByteString.concat (reverse revEncoded),
           encodedRowBytes = encodedBytes,
           rowCount = count,
-          lastRow = mLastRow
+          lastRow = mLastRow,
+          lastRawRow = mLastRawRow
         }
 
 -- | Consume one value's tokens without building it, returning the continuation.

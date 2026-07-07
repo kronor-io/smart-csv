@@ -10,6 +10,7 @@ import Data.Aeson.Key qualified as JSON
 import Data.Time (nominalDay)
 import Kronor.Db.Models.Shard (ShardId (..))
 import Kronor.Db.Types.Bigint (Bigint (..))
+import Kronor.SmartCsv.Pagination qualified as SmartCsvPagination
 import Kronor.SmartCsv.Validation qualified as SmartCsvValidation
 import RIO
 import RIO.Text qualified as Text
@@ -19,6 +20,7 @@ data SmartGraphqlCsvGenerator = SmartGraphqlCsvGenerator
   { shardId :: ShardId,
     recipient :: Text,
     graphqlPaginationKey :: JSON.Key,
+    orderBy :: Maybe Value,
     graphqlQueryBody :: Text,
     graphqlQueryVariables :: Value,
     columnConfig :: Maybe Value,
@@ -53,6 +55,15 @@ validateSmartGraphqlCsvGeneratorInput maxRangeDays input = do
     Left validationError -> Left $ "Invalid GraphQL query variables: " <> Text.unpack validationError
     Right vars -> Right vars
 
+  case input.orderBy of
+    Nothing -> pure ()
+    Just orderBy ->
+      case SmartCsvPagination.parseOrderByFields orderBy of
+        [] -> Left "orderBy must contain at least one ASC or DESC field"
+        firstField : _
+          | firstField.paginationFieldName == input.graphqlPaginationKey -> pure ()
+          | otherwise -> Left "The first orderBy field must match graphqlPaginationKey"
+
   -- Cannot specify both inline config and named config
   when (isJust input.columnConfig && isJust input.columnConfigName)
     $ Left "Cannot specify both columnConfig and columnConfigName"
@@ -62,6 +73,7 @@ validateSmartGraphqlCsvGeneratorInput maxRangeDays input = do
       { shardId = ShardId input.shardId,
         recipient = input.recipient,
         graphqlPaginationKey = graphqlPaginationKey,
+        orderBy = input.orderBy,
         graphqlQueryBody = input.graphqlQueryBody,
         graphqlQueryVariables = queryVariables,
         columnConfig = input.columnConfig,
