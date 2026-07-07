@@ -103,6 +103,7 @@ test-suite smart-csv-test
   hs-source-dirs:   test
   build-depends:
       aeson
+    , bytestring
     , containers
     , smart-csv
     , morpheus-graphql-core

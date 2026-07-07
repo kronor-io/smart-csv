@@ -1,6 +1,7 @@
 module Test.Kronor.SmartCsv (main) where
 
 import Data.Aeson qualified as Aeson
+import Data.ByteString.Char8 qualified as ByteString.Char8
 import Data.Map.Strict qualified as Map
 import Data.Morpheus.Core (parseRequest)
 import Data.Morpheus.Internal.Ext (Result (..))
@@ -8,14 +9,15 @@ import Data.Morpheus.Types.IO (GQLRequest (..))
 import Data.Morpheus.Types.Internal.AST (ExecutableDocument (..), Operation (..), RAW, Selection)
 import Data.Vector qualified as Vector
 import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnSettings (..), parseColumnConfig)
-import Kronor.SmartCsv.ErrorHandling (ErrorAction (..), classifyCursorError, classifyJsonDecodeError, classifyResponseError, classifyTokenClaimsError)
+import Kronor.SmartCsv.ErrorHandling (ErrorAction (..), classifyCursorError, classifyHttpStatusError, classifyJsonDecodeError, classifyResponseError, classifyTokenClaimsError)
 import Kronor.SmartCsv.Flatten (csvify, gatherSelectionNames)
 import Kronor.SmartCsv.Notification (CompletionEmail (..), EnqueueMeta (..), defaultEnqueueMeta, mkCompletionEmail)
-import Kronor.SmartCsv.Pagination (CursorError (..), extractCursor, inferHeaders)
-import Kronor.SmartCsv.Query (GenericQuery (..), ResponseError (..), buildRequestBody, decodeResponseRows, resolvePaginationKey)
+import Kronor.SmartCsv.Pagination (CursorError (..), PaginationCursor (..), PaginationDirection (..), PaginationField (..), extractCursor, inferHeaders)
+import Kronor.SmartCsv.Query (DecodedResponsePage (..), GenericQuery (..), ResponseError (..), buildRequestBody, decodeResponseChunk, decodeResponsePage, decodeResponseRows, decodedResponsePageBytes, resolvePaginationFields, resolvePaginationKey)
 import Kronor.SmartCsv.TokenClaims (ParsedTokenClaims (..), TokenClaimsError (..), parseTokenClaims)
 import Kronor.SmartCsv.Validation qualified as SmartCsvValidation
 import RIO
+import RIO.ByteString.Lazy qualified as LByteString
 import RIO.List (headMaybe)
 import Test.Tasty (TestTree, defaultMain, testGroup)
 import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
@@ -30,10 +32,16 @@ tests =
     [ testCase "csvify extracts nested values via configured data paths" testCsvify,
       testCase "gatherSelectionNames returns direct selected fields" testGatherSelectionNames,
       testCase "extractCursor resolves configured pagination column aliases" testExtractCursorWithAlias,
+      testCase "extractCursor captures composite order cursor values" testExtractCursorCompositeOrder,
       testCase "extractCursor falls back to field name when no alias exists" testExtractCursorFallback,
       testCase "resolvePaginationKey uses default createdAt" testResolvePaginationKeyDefault,
+      testCase "resolvePaginationFields uses orderBy when it matches pagination key" testResolvePaginationFieldsUsesOrderBy,
       testCase "buildRequestBody injects pagination variables" testBuildRequestBody,
+      testCase "buildRequestBody injects lexicographic pagination conditions" testBuildRequestBodyComposite,
       testCase "decodeResponseRows extracts csv rows from graphql data" testDecodeResponseRows,
+      testCase "decodeResponseChunk stops after reaching chunk target" testDecodeResponseChunk,
+      testCase "decodeResponsePage streams rows into csv bytes" testDecodeResponsePage,
+      testCase "decodeResponsePage returns top-level error" testDecodeResponsePageError,
       testCase "decodeResponseRows returns missing root error when root is absent" testDecodeResponseRowsMissingRoot,
       testCase "parseTokenClaims extracts expected optional fields" testParseTokenClaims,
       testCase "parseTokenClaims rejects non-object claims payload" testParseTokenClaimsInvalid,
@@ -47,6 +55,9 @@ tests =
       testCase "classifyCursorError with missing value returns non-retryable action" testClassifyCursorErrorMissing,
       testCase "classifyTokenClaimsError returns non-retryable action" testClassifyTokenClaimsError,
       testCase "classifyJsonDecodeError returns retryable action" testClassifyJsonDecodeError,
+      testCase "classifyHttpStatusError with server error returns retryable action" testClassifyHttpStatusErrorServerError,
+      testCase "classifyHttpStatusError with throttling returns retryable action" testClassifyHttpStatusErrorThrottled,
+      testCase "classifyHttpStatusError with client error returns non-retryable action" testClassifyHttpStatusErrorClientError,
       testCase "validateGraphqlQueryBody accepts valid query" testValidateGraphqlQueryBodyValid,
       testCase "validateGraphqlQueryBody rejects missing paginationCondition" testValidateGraphqlQueryBodyMissingPaginationCondition,
       testCase "validateGraphqlQueryBodyAndGetRootField returns root field name" testValidateGraphqlQueryBodyAndGetRootFieldValid,
@@ -107,18 +118,61 @@ testExtractCursorWithAlias :: IO ()
 testExtractCursorWithAlias = do
   root <- parseRootSelection gqlQueryText
   let row = Map.fromList [("Placed At", "2026-03-16T13:10:02Z")]
-  extractCursor columnConfig root "createdAt" row @?= Right "2026-03-16T13:10:02Z"
+  extractCursor columnConfig root singleFieldPaginationFields row
+    @?= Right (PaginationCursor (Map.fromList [("createdAt", "2026-03-16T13:10:02Z")]))
+
+testExtractCursorCompositeOrder :: IO ()
+testExtractCursorCompositeOrder = do
+  root <- parseRootSelection compositeCursorQueryText
+  let row =
+        Map.fromList
+          [ ("createdAt", "2026-05-12T08:07:32.542661+02:00"),
+            ("date", "2026-05-11"),
+            ("transactionNo", "CST000000000016390")
+          ]
+  extractCursor mempty root compositePaginationFields row
+    @?= Right
+      ( PaginationCursor
+          ( Map.fromList
+              [ ("createdAt", "2026-05-12T08:07:32.542661+02:00"),
+                ("date", "2026-05-11"),
+                ("transactionNo", "CST000000000016390")
+              ]
+          )
+      )
 
 testExtractCursorFallback :: IO ()
 testExtractCursorFallback = do
   root <- parseRootSelection fallbackCursorQueryText
   let row = Map.fromList [("internalCursor", "cursor_001")]
-  extractCursor mempty root "internalCursor" row @?= Right "cursor_001"
+  extractCursor mempty root fallbackPaginationFields row
+    @?= Right (PaginationCursor (Map.fromList [("internalCursor", "cursor_001")]))
 
 testResolvePaginationKeyDefault :: IO ()
 testResolvePaginationKeyDefault = do
   let gq = GenericQuery {paginationKey = Nothing, query = "query {}", variables = Aeson.object []}
   resolvePaginationKey gq @?= "createdAt"
+
+testResolvePaginationFieldsUsesOrderBy :: IO ()
+testResolvePaginationFieldsUsesOrderBy = do
+  let gq =
+        GenericQuery
+          { paginationKey = Just "createdAt",
+            query = "query {}",
+            variables =
+              Aeson.object
+                [ ( "orderBy",
+                    Aeson.Array
+                      ( Vector.fromList
+                          [ Aeson.object [("createdAt", Aeson.String "DESC")],
+                            Aeson.object [("date", Aeson.String "DESC")],
+                            Aeson.object [("transactionNo", Aeson.String "DESC")]
+                          ]
+                      )
+                  )
+                ]
+          }
+  resolvePaginationFields gq @?= compositePaginationFields
 
 testBuildRequestBody :: IO ()
 testBuildRequestBody = do
@@ -128,7 +182,7 @@ testBuildRequestBody = do
             query = "query ($rowLimit: Int!, $paginationCondition: paymentRequests_bool_exp!) { paymentRequests { payment_request_id: waitToken } }",
             variables = Aeson.object [("existingVar", Aeson.String "kept")]
           }
-      payload = buildRequestBody "createdAt" 100 (Just "cursor_123") gq
+      payload = buildRequestBody singleFieldPaginationFields 100 (Just (PaginationCursor (Map.fromList [("createdAt", "cursor_123")]))) gq
   case Aeson.eitherDecode payload of
     Left err -> assertFailure err
     Right (val :: Aeson.Value) -> do
@@ -141,6 +195,94 @@ testBuildRequestBody = do
                 [ ("existingVar", Aeson.String "kept"),
                   ("rowLimit", Aeson.Number 100),
                   ("paginationCondition", Aeson.object [("createdAt", Aeson.object [("_lt", Aeson.String "cursor_123")])])
+                ]
+            )
+          ]
+
+testBuildRequestBodyComposite :: IO ()
+testBuildRequestBodyComposite = do
+  let gq =
+        GenericQuery
+          { paginationKey = Just "createdAt",
+            query = "query ($rowLimit: Int!, $paginationCondition: paymentRequests_bool_exp!) { CashSettlement { createdAt date transactionNo } }",
+            variables =
+              Aeson.object
+                [ ( "orderBy",
+                    Aeson.Array
+                      ( Vector.fromList
+                          [ Aeson.object [("createdAt", Aeson.String "DESC")],
+                            Aeson.object [("date", Aeson.String "DESC")],
+                            Aeson.object [("transactionNo", Aeson.String "DESC")]
+                          ]
+                      )
+                  )
+                ]
+          }
+      payload =
+        buildRequestBody
+          compositePaginationFields
+          250
+          ( Just
+              ( PaginationCursor
+                  ( Map.fromList
+                      [ ("createdAt", "2026-05-12T08:07:32.542661+02:00"),
+                        ("date", "2026-05-11"),
+                        ("transactionNo", "CST000000000016390")
+                      ]
+                  )
+              )
+          )
+          gq
+  case Aeson.eitherDecode payload of
+    Left err -> assertFailure err
+    Right (val :: Aeson.Value) ->
+      val
+        @?= Aeson.object
+          [ ("paginationKey", Aeson.String "createdAt"),
+            ("query", Aeson.String gq.query),
+            ( "variables",
+              Aeson.object
+                [ ( "orderBy",
+                    Aeson.Array
+                      ( Vector.fromList
+                          [ Aeson.object [("createdAt", Aeson.String "DESC")],
+                            Aeson.object [("date", Aeson.String "DESC")],
+                            Aeson.object [("transactionNo", Aeson.String "DESC")]
+                          ]
+                      )
+                  ),
+                  ("rowLimit", Aeson.Number 250),
+                  ( "paginationCondition",
+                    Aeson.object
+                      [ ( "_or",
+                          Aeson.toJSON
+                            [ Aeson.object [("createdAt", Aeson.object [("_lt", Aeson.String "2026-05-12T08:07:32.542661+02:00")])],
+                              Aeson.object
+                                [ ("createdAt", Aeson.object [("_eq", Aeson.String "2026-05-12T08:07:32.542661+02:00")]),
+                                  ( "_and",
+                                    Aeson.toJSON
+                                      [ Aeson.object
+                                          [ ( "_or",
+                                              Aeson.toJSON
+                                                [ Aeson.object [("date", Aeson.object [("_lt", Aeson.String "2026-05-11")])],
+                                                  Aeson.object
+                                                    [ ("date", Aeson.object [("_eq", Aeson.String "2026-05-11")]),
+                                                      ( "_and",
+                                                        Aeson.toJSON
+                                                          [ Aeson.object [("transactionNo", Aeson.object [("_lt", Aeson.String "CST000000000016390")])]
+                                                          ]
+                                                      )
+                                                    ]
+                                                ]
+                                            )
+                                          ]
+                                      ]
+                                  )
+                                ]
+                            ]
+                        )
+                      ]
+                  )
                 ]
             )
           ]
@@ -167,6 +309,46 @@ testDecodeResponseRows = do
       emptyRow = Map.fromList [("Payment Request ID", mempty), ("Placed At", mempty)]
   decodeResponseRows columnConfig "paymentRequests" emptyRow response
     @?= Right (Vector.fromList [Map.fromList [("Payment Request ID", "wt_777"), ("Placed At", "2026-03-16T14:22:00Z")]])
+
+testDecodeResponsePage :: IO ()
+testDecodeResponsePage = do
+  let response =
+        ByteString.Char8.pack
+          "{\"data\":{\"paymentRequests\":[{\"payment_request_id\":\"wt_777\",\"placed_at\":\"2026-03-16T14:22:00Z\"},{\"payment_request_id\":\"wt_778\",\"placed_at\":\"2026-03-16T14:23:00Z\"}]}}"
+      header = Vector.fromList ["Payment Request ID", "Placed At"]
+      emptyRow = Map.fromList [("Payment Request ID", mempty), ("Placed At", mempty)]
+  case decodeResponsePage columnConfig "paymentRequests" emptyRow header response of
+    Left err -> assertFailure err
+    Right (Left responseErr) -> assertFailure (show responseErr)
+    Right (Right decodedPage) -> do
+      decodedResponsePageBytes decodedPage @?= LByteString.fromStrict "wt_777,2026-03-16T14:22:00Z\r\nwt_778,2026-03-16T14:23:00Z\r\n"
+      decodedPage.rowCount @?= 2
+      decodedPage.lastRow @?= Just (Map.fromList [("Payment Request ID", "wt_778"), ("Placed At", "2026-03-16T14:23:00Z")])
+
+testDecodeResponseChunk :: IO ()
+testDecodeResponseChunk = do
+  let response =
+        ByteString.Char8.pack
+          "{\"data\":{\"paymentRequests\":[{\"payment_request_id\":\"wt_777\",\"placed_at\":\"2026-03-16T14:22:00Z\"},{\"payment_request_id\":\"wt_778\",\"placed_at\":\"2026-03-16T14:23:00Z\"}]}}"
+      header = Vector.fromList ["Payment Request ID", "Placed At"]
+      emptyRow = Map.fromList [("Payment Request ID", mempty), ("Placed At", mempty)]
+      firstRow = LByteString.fromStrict "wt_777,2026-03-16T14:22:00Z\r\n"
+  case decodeResponseChunk (LByteString.length firstRow) columnConfig "paymentRequests" emptyRow header response of
+    Left err -> assertFailure err
+    Right (Left responseErr) -> assertFailure (show responseErr)
+    Right (Right decodedPage) -> do
+      decodedResponsePageBytes decodedPage @?= firstRow
+      decodedPage.rowCount @?= 1
+      decodedPage.lastRow @?= Just (Map.fromList [("Payment Request ID", "wt_777"), ("Placed At", "2026-03-16T14:22:00Z")])
+
+testDecodeResponsePageError :: IO ()
+testDecodeResponsePageError = do
+  let response = ByteString.Char8.pack "{\"error\":\"transient upstream error\"}"
+      header = Vector.fromList ["Payment Request ID"]
+  case decodeResponsePage columnConfig "paymentRequests" mempty header response of
+    Left err -> assertFailure err
+    Right (Left responseErr) -> responseErr @?= ResponseContainsError "transient upstream error"
+    Right (Right _) -> assertFailure "expected top-level response error"
 
 testDecodeResponseRowsMissingRoot :: IO ()
 testDecodeResponseRowsMissingRoot = do
@@ -296,9 +478,24 @@ missingCursorQueryText :: Text
 missingCursorQueryText =
   "query { paymentRequests { payment_request_id: waitToken } }"
 
+compositeCursorQueryText :: Text
+compositeCursorQueryText =
+  "query { CashSettlement { transactionNo date createdAt } }"
+
 nestedCursorQueryText :: Text
 nestedCursorQueryText =
   "query { paymentRequests { payment_request_id: waitToken customer { createdAt } } }"
+
+singleFieldPaginationFields :: NonEmpty PaginationField
+singleFieldPaginationFields = PaginationField "createdAt" PaginationDesc :| []
+
+fallbackPaginationFields :: NonEmpty PaginationField
+fallbackPaginationFields = PaginationField "internalCursor" PaginationDesc :| []
+
+compositePaginationFields :: NonEmpty PaginationField
+compositePaginationFields =
+  PaginationField "createdAt" PaginationDesc
+    :| [PaginationField "date" PaginationDesc, PaginationField "transactionNo" PaginationDesc]
 
 testClassifyResponseErrorRetry :: IO ()
 testClassifyResponseErrorRetry =
@@ -334,6 +531,21 @@ testClassifyJsonDecodeError :: IO ()
 testClassifyJsonDecodeError =
   classifyJsonDecodeError "trailing junk"
     @?= Retry "trailing junk"
+
+testClassifyHttpStatusErrorServerError :: IO ()
+testClassifyHttpStatusErrorServerError =
+  classifyHttpStatusError 502
+    @?= Retry "GraphQL request failed with HTTP status: 502"
+
+testClassifyHttpStatusErrorThrottled :: IO ()
+testClassifyHttpStatusErrorThrottled =
+  classifyHttpStatusError 429
+    @?= Retry "GraphQL request failed with HTTP status: 429"
+
+testClassifyHttpStatusErrorClientError :: IO ()
+testClassifyHttpStatusErrorClientError =
+  classifyHttpStatusError 401
+    @?= Giveup "GraphQL request failed with HTTP status: 401"
 
 testValidateGraphqlQueryBodyValid :: IO ()
 testValidateGraphqlQueryBodyValid =
@@ -545,14 +757,14 @@ testExtractCursorMissingSelection :: IO ()
 testExtractCursorMissingSelection = do
   root <- parseRootSelection missingCursorQueryText
   let row = Map.fromList [("Placed At", "2026-03-16T13:10:02Z")]
-  extractCursor columnConfig root "createdAt" row
+  extractCursor columnConfig root singleFieldPaginationFields row
     @?= Left (CursorColumnMissing "createdAt")
 
 testExtractCursorIgnoresNestedField :: IO ()
 testExtractCursorIgnoresNestedField = do
   root <- parseRootSelection nestedCursorQueryText
   let row = Map.fromList [("createdAt", "2026-03-16T13:10:02Z")]
-  extractCursor mempty root "createdAt" row
+  extractCursor mempty root singleFieldPaginationFields row
     @?= Left (CursorColumnMissing "createdAt")
 
 testDecodeResponseRowsPassThrough :: IO ()
