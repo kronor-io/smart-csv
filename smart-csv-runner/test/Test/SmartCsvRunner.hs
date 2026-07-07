@@ -38,10 +38,12 @@ tests =
           testCase "generate endpoint rejects malformed JSON" testGenerateEndpointMalformedJson,
           testCase "generate endpoint rejects missing auth header" testGenerateEndpointMissingAuth,
           testCase "input json decoding accepts valid payload" testInputJsonDecodeValid,
+          testCase "input json decoding accepts top-level orderBy" testInputJsonDecodeWithOrderBy,
           testCase "input json decoding fails when required field is missing" testInputJsonDecodeMissingField,
           testCase "input json decoding accepts payload with inline columnConfig" testInputJsonDecodeWithColumnConfig,
           testCase "input json decoding accepts payload with columnConfigName" testInputJsonDecodeWithColumnConfigName,
           testCase "validation rejects both columnConfig and columnConfigName" testValidationRejectsBothColumnConfigs,
+          testCase "validation rejects orderBy that does not start with pagination key" testValidationRejectsOrderByMismatch,
           testCase "validation uses provided max range" testValidationUsesProvidedMaxRange,
           testCase "validation accepts range within provided max range" testValidationAcceptsRangeWithinProvidedMaxRange,
           testCase "verifyBearerToken rejects invalid signature" testVerifyBearerTokenInvalidSig,
@@ -57,6 +59,7 @@ mkInput =
     { shardId = Bigint 42,
       recipient = "ops@kronor.io",
       graphqlPaginationKey = "createdAt",
+      orderBy = Nothing,
       graphqlQueryBody =
         "query ($rowLimit: Int!, $paginationCondition: paymentRequests_bool_exp!) { \
         \  paymentRequests(limit: $rowLimit, where: $paginationCondition) { payment_request_id: waitToken } \
@@ -167,6 +170,18 @@ testInputJsonDecodeValid = do
   let payload = Aeson.encode mkInput
   Aeson.eitherDecode payload @?= Right mkInput
 
+testInputJsonDecodeWithOrderBy :: IO ()
+testInputJsonDecodeWithOrderBy = do
+  let orderBy =
+        Aeson.toJSON
+          [ Aeson.object [("createdAt", Aeson.String "DESC")],
+            Aeson.object [("date", Aeson.String "DESC")],
+            Aeson.object [("transactionNo", Aeson.String "DESC")]
+          ]
+      input = mkInput {orderBy = Just orderBy}
+      payload = Aeson.encode input
+  Aeson.eitherDecode payload @?= Right input
+
 testInputJsonDecodeMissingField :: IO ()
 testInputJsonDecodeMissingField = do
   let payload =
@@ -196,6 +211,21 @@ testValidationRejectsBothColumnConfigs = do
           }
   Val.validateSmartGraphqlCsvGeneratorInput 33 input
     @?= Left "Cannot specify both columnConfig and columnConfigName"
+
+testValidationRejectsOrderByMismatch :: IO ()
+testValidationRejectsOrderByMismatch = do
+  let input =
+        mkInput
+          { orderBy =
+              Just
+                ( Aeson.toJSON
+                    [ Aeson.object [("date", Aeson.String "DESC")],
+                      Aeson.object [("transactionNo", Aeson.String "DESC")]
+                    ]
+                )
+          }
+  Val.validateSmartGraphqlCsvGeneratorInput 33 input
+    @?= Left "The first orderBy field must match graphqlPaginationKey"
 
 testValidationUsesProvidedMaxRange :: IO ()
 testValidationUsesProvidedMaxRange = do

@@ -132,9 +132,9 @@ generateCSV payload = do
     Failure errs -> do
       Job.giveupS logSource (displayBytesUtf8 (toStrictBytes (Aeson.encode errs)))
   where
-    gqlCursor :: ColumnConfig -> Job.PayloadId -> Selection RAW -> NonEmpty SmartCsv.PaginationField -> CsvRow -> SmartCsv.PaginationCursor
-    gqlCursor colConfig pId rootSelection paginationFields v =
-      case SmartCsv.extractCursor colConfig rootSelection paginationFields v of
+    gqlCursor :: Job.PayloadId -> Selection RAW -> NonEmpty SmartCsv.PaginationField -> Aeson.Value -> SmartCsv.PaginationCursor
+    gqlCursor pId rootSelection paginationFields v =
+      case SmartCsv.extractCursorValue rootSelection paginationFields v of
         Left cursorErr ->
           case SmartCsvErrorHandling.classifyCursorError cursorErr of
             SmartCsvErrorHandling.Retry _ -> error "Unexpected retry for cursor error"
@@ -147,14 +147,14 @@ generateCSV payload = do
       eRes <- streamResponsePage httpManager graphqlUrl authToken reqBody colConfig root emptyCsvRow header
       case eRes of
         Right page ->
-          pure $ case page.lastRow of
+          pure $ case page.lastRawRow of
             Nothing -> Nothing
             Just lastParsedRow ->
               Just
                 EncodedCsvPage
                   { encodedRows = page.encodedRows,
                     encodedRowBytes = page.encodedRowBytes,
-                    lastCursor = gqlCursor colConfig pId rootSelection paginationFields lastParsedRow,
+                    lastCursor = gqlCursor pId rootSelection paginationFields lastParsedRow,
                     rowCount = page.rowCount
                   }
         Left responseErr ->

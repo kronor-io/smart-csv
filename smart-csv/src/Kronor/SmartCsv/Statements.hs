@@ -26,7 +26,7 @@ data GeneratedCsvPayload = GeneratedCsvPayload
     deriving stock (Eq, Show)
 
 
-insertSmartGraphqlCsvGenerator :: Statement (Int64, Text, Text, Text, Aeson.Value, Aeson.Value) Int64
+insertSmartGraphqlCsvGenerator :: Statement (Int64, Text, Text, Maybe Aeson.Value, Text, Aeson.Value, Aeson.Value) Int64
 insertSmartGraphqlCsvGenerator =
     [singletonStatement|
         with gcsv as
@@ -43,6 +43,7 @@ insertSmartGraphqlCsvGenerator =
             , recipient
             , id
             , pagination_key
+            , order_by
             , query
             , variables
             , token_claims
@@ -52,9 +53,10 @@ insertSmartGraphqlCsvGenerator =
           , $2::text
           , gcsv.id
           , $3::text
-          , $4::text
-          , $5::jsonb
-          , $6::jsonb
+                    , $4::jsonb?
+                    , $5::text
+                    , $6::jsonb
+                    , $7::jsonb
         from gcsv
         returning id::bigint
     |]
@@ -78,7 +80,7 @@ selectGeneratedCsvPayload =
 selectGeneratorConfig :: Statement (Int64, Int64) (GenericQuery, Aeson.Value, Text, Maybe Aeson.Value, Maybe Text)
 selectGeneratorConfig =
     [singletonStatement|
-        select $GenericQuery{paginationKey = pagination_key::text?, query = query::text, variables = variables::jsonb},
+        select $GenericQuery{paginationKey = pagination_key::text?, orderBy = order_by::jsonb?, query = query::text, variables = variables::jsonb},
             token_claims::jsonb,
             recipient::text,
             column_config::jsonb?,

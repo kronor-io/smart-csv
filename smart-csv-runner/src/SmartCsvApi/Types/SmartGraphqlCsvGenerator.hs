@@ -13,6 +13,7 @@ data SmartGraphqlCsvGeneratorInput = SmartGraphqlCsvGeneratorInput
   { shardId :: Bigint,
     recipient :: Text,
     graphqlPaginationKey :: Text,
+    orderBy :: Maybe Value,
     graphqlQueryBody :: Text,
     graphqlQueryVariables :: Text,
     columnConfig :: Maybe Value,

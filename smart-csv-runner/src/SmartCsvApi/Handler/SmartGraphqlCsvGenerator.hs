@@ -78,6 +78,7 @@ handleValidated apiEnv tokenClaims input = do
                     ( shardId,
                       Val.recipient validated,
                       Key.toText (Val.graphqlPaginationKey validated),
+                      Val.orderBy validated,
                       Val.graphqlQueryBody validated,
                       Val.graphqlQueryVariables validated,
                       tokenClaims,

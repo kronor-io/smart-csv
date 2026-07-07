@@ -68,6 +68,7 @@ BEGIN;
         created_at timestamptz NOT NULL DEFAULT now(),
 
         pagination_key text_100 NOT NULL,
+        order_by jsonb NULL,
         query text_10000 NOT NULL,
         variables jsonb NOT NULL,
         token_claims jsonb NOT NULL,
@@ -75,6 +76,9 @@ BEGIN;
 
         PRIMARY KEY (shard_id, id)
     );
+
+    ALTER TABLE smart_csv.smart_graphql_csv_generator
+        ADD COLUMN IF NOT EXISTS order_by jsonb NULL;
 
     COMMENT ON TABLE smart_csv.smart_graphql_csv_generator IS
         'CSV generation requests with their GraphQL query configuration.';

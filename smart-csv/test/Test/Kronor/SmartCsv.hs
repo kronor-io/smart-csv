@@ -12,7 +12,7 @@ import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnSettings (..), parseCol
 import Kronor.SmartCsv.ErrorHandling (ErrorAction (..), classifyCursorError, classifyHttpStatusError, classifyJsonDecodeError, classifyResponseError, classifyTokenClaimsError)
 import Kronor.SmartCsv.Flatten (csvify, gatherSelectionNames)
 import Kronor.SmartCsv.Notification (CompletionEmail (..), EnqueueMeta (..), defaultEnqueueMeta, mkCompletionEmail)
-import Kronor.SmartCsv.Pagination (CursorError (..), PaginationCursor (..), PaginationDirection (..), PaginationField (..), extractCursor, inferHeaders)
+import Kronor.SmartCsv.Pagination (CursorError (..), PaginationCursor (..), PaginationDirection (..), PaginationField (..), extractCursor, extractCursorValue, inferHeaders)
 import Kronor.SmartCsv.Query (DecodedResponsePage (..), GenericQuery (..), ResponseError (..), buildRequestBody, decodeResponseChunk, decodeResponsePage, decodeResponseRows, decodedResponsePageBytes, resolvePaginationFields, resolvePaginationKey)
 import Kronor.SmartCsv.TokenClaims (ParsedTokenClaims (..), TokenClaimsError (..), parseTokenClaims)
 import Kronor.SmartCsv.Validation qualified as SmartCsvValidation
@@ -33,11 +33,15 @@ tests =
       testCase "gatherSelectionNames returns direct selected fields" testGatherSelectionNames,
       testCase "extractCursor resolves configured pagination column aliases" testExtractCursorWithAlias,
       testCase "extractCursor captures composite order cursor values" testExtractCursorCompositeOrder,
+      testCase "extractCursorValue captures nested cursor values from raw rows" testExtractCursorValueNested,
       testCase "extractCursor falls back to field name when no alias exists" testExtractCursorFallback,
       testCase "resolvePaginationKey uses default createdAt" testResolvePaginationKeyDefault,
       testCase "resolvePaginationFields uses orderBy when it matches pagination key" testResolvePaginationFieldsUsesOrderBy,
+      testCase "resolvePaginationFields uses explicit nested orderBy" testResolvePaginationFieldsNestedOrderBy,
       testCase "buildRequestBody injects pagination variables" testBuildRequestBody,
       testCase "buildRequestBody injects lexicographic pagination conditions" testBuildRequestBodyComposite,
+      testCase "buildRequestBody injects explicit orderBy" testBuildRequestBodyExplicitOrderBy,
+      testCase "buildRequestBody injects nested pagination conditions" testBuildRequestBodyNested,
       testCase "decodeResponseRows extracts csv rows from graphql data" testDecodeResponseRows,
       testCase "decodeResponseChunk stops after reaching chunk target" testDecodeResponseChunk,
       testCase "decodeResponsePage streams rows into csv bytes" testDecodeResponsePage,
@@ -76,7 +80,7 @@ tests =
       testCase "inferHeaders with empty config returns alias ids" testInferHeadersPassThrough,
       testCase "inferHeaders with custom config renames aliased columns" testInferHeadersCustomConfig,
       testCase "extractCursor returns error when pagination field is not selected" testExtractCursorMissingSelection,
-      testCase "extractCursor ignores nested fields named like the pagination key" testExtractCursorIgnoresNestedField,
+      testCase "extractCursor supports nested pagination fields" testExtractCursorNestedField,
       testCase "decodeResponseRows with empty config uses alias ids" testDecodeResponseRowsPassThrough
     ]
 
@@ -141,6 +145,17 @@ testExtractCursorCompositeOrder = do
           )
       )
 
+testExtractCursorValueNested :: IO ()
+testExtractCursorValueNested = do
+  root <- parseRootSelection nestedCursorQueryText
+  let row =
+        Aeson.object
+          [ ("payment_request_id", Aeson.String "wt_123"),
+            ("customer", Aeson.object [("createdAt", Aeson.String "2026-03-16T13:10:02Z"), ("email", Aeson.String "ada@example.com")])
+          ]
+  extractCursorValue root (PaginationField "customer.createdAt" PaginationDesc :| []) row
+    @?= Right (PaginationCursor (Map.fromList [("customer.createdAt", "2026-03-16T13:10:02Z")]))
+
 testExtractCursorFallback :: IO ()
 testExtractCursorFallback = do
   root <- parseRootSelection fallbackCursorQueryText
@@ -150,7 +165,7 @@ testExtractCursorFallback = do
 
 testResolvePaginationKeyDefault :: IO ()
 testResolvePaginationKeyDefault = do
-  let gq = GenericQuery {paginationKey = Nothing, query = "query {}", variables = Aeson.object []}
+  let gq = GenericQuery {paginationKey = Nothing, orderBy = Nothing, query = "query {}", variables = Aeson.object []}
   resolvePaginationKey gq @?= "createdAt"
 
 testResolvePaginationFieldsUsesOrderBy :: IO ()
@@ -158,6 +173,7 @@ testResolvePaginationFieldsUsesOrderBy = do
   let gq =
         GenericQuery
           { paginationKey = Just "createdAt",
+            orderBy = Nothing,
             query = "query {}",
             variables =
               Aeson.object
@@ -174,11 +190,30 @@ testResolvePaginationFieldsUsesOrderBy = do
           }
   resolvePaginationFields gq @?= compositePaginationFields
 
+testResolvePaginationFieldsNestedOrderBy :: IO ()
+testResolvePaginationFieldsNestedOrderBy = do
+  let orderBy =
+        Aeson.Array
+          ( Vector.fromList
+              [ Aeson.object [("customer", Aeson.object [("createdAt", Aeson.String "DESC")])],
+                Aeson.object [("transactionNo", Aeson.String "DESC")]
+              ]
+          )
+      gq =
+        GenericQuery
+          { paginationKey = Just "customer.createdAt",
+            orderBy = Just orderBy,
+            query = "query {}",
+            variables = Aeson.object []
+          }
+  resolvePaginationFields gq @?= nestedPaginationFields
+
 testBuildRequestBody :: IO ()
 testBuildRequestBody = do
   let gq =
         GenericQuery
           { paginationKey = Just "createdAt",
+            orderBy = Nothing,
             query = "query ($rowLimit: Int!, $paginationCondition: paymentRequests_bool_exp!) { paymentRequests { payment_request_id: waitToken } }",
             variables = Aeson.object [("existingVar", Aeson.String "kept")]
           }
@@ -204,6 +239,7 @@ testBuildRequestBodyComposite = do
   let gq =
         GenericQuery
           { paginationKey = Just "createdAt",
+            orderBy = Nothing,
             query = "query ($rowLimit: Int!, $paginationCondition: paymentRequests_bool_exp!) { CashSettlement { createdAt date transactionNo } }",
             variables =
               Aeson.object
@@ -258,24 +294,113 @@ testBuildRequestBodyComposite = do
                           Aeson.toJSON
                             [ Aeson.object [("createdAt", Aeson.object [("_lt", Aeson.String "2026-05-12T08:07:32.542661+02:00")])],
                               Aeson.object
-                                [ ("createdAt", Aeson.object [("_eq", Aeson.String "2026-05-12T08:07:32.542661+02:00")]),
-                                  ( "_and",
+                                [ ( "_and",
                                     Aeson.toJSON
-                                      [ Aeson.object
+                                      [ Aeson.object [("createdAt", Aeson.object [("_eq", Aeson.String "2026-05-12T08:07:32.542661+02:00")])],
+                                        Aeson.object
                                           [ ( "_or",
                                               Aeson.toJSON
                                                 [ Aeson.object [("date", Aeson.object [("_lt", Aeson.String "2026-05-11")])],
                                                   Aeson.object
-                                                    [ ("date", Aeson.object [("_eq", Aeson.String "2026-05-11")]),
-                                                      ( "_and",
+                                                    [ ( "_and",
                                                         Aeson.toJSON
-                                                          [ Aeson.object [("transactionNo", Aeson.object [("_lt", Aeson.String "CST000000000016390")])]
+                                                          [ Aeson.object [("date", Aeson.object [("_eq", Aeson.String "2026-05-11")])],
+                                                            Aeson.object [("transactionNo", Aeson.object [("_lt", Aeson.String "CST000000000016390")])]
                                                           ]
                                                       )
                                                     ]
                                                 ]
                                             )
                                           ]
+                                      ]
+                                  )
+                                ]
+                            ]
+                        )
+                      ]
+                  )
+                ]
+            )
+          ]
+
+testBuildRequestBodyExplicitOrderBy :: IO ()
+testBuildRequestBodyExplicitOrderBy = do
+  let orderBy = Aeson.Array (Vector.fromList [Aeson.object [("createdAt", Aeson.String "DESC")]])
+      gq =
+        GenericQuery
+          { paginationKey = Just "createdAt",
+            orderBy = Just orderBy,
+            query = "query ($rowLimit: Int!, $paginationCondition: paymentRequests_bool_exp!, $orderBy: [paymentRequests_order_by!]) { paymentRequests { payment_request_id: waitToken } }",
+            variables = Aeson.object [("orderBy", Aeson.Array Vector.empty)]
+          }
+      payload = buildRequestBody singleFieldPaginationFields 100 Nothing gq
+  case Aeson.eitherDecode payload of
+    Left err -> assertFailure err
+    Right (val :: Aeson.Value) ->
+      val
+        @?= Aeson.object
+          [ ("paginationKey", Aeson.String "createdAt"),
+            ("query", Aeson.String gq.query),
+            ( "variables",
+              Aeson.object
+                [ ("orderBy", orderBy),
+                  ("rowLimit", Aeson.Number 100),
+                  ("paginationCondition", Aeson.object [])
+                ]
+            )
+          ]
+
+testBuildRequestBodyNested :: IO ()
+testBuildRequestBodyNested = do
+  let orderBy =
+        Aeson.Array
+          ( Vector.fromList
+              [ Aeson.object [("customer", Aeson.object [("createdAt", Aeson.String "DESC")])],
+                Aeson.object [("transactionNo", Aeson.String "DESC")]
+              ]
+          )
+      gq =
+        GenericQuery
+          { paginationKey = Just "customer.createdAt",
+            orderBy = Just orderBy,
+            query = "query ($rowLimit: Int!, $paginationCondition: paymentRequests_bool_exp!, $orderBy: [paymentRequests_order_by!]) { paymentRequests { customer { createdAt } transactionNo } }",
+            variables = Aeson.object []
+          }
+      payload =
+        buildRequestBody
+          nestedPaginationFields
+          100
+          ( Just
+              ( PaginationCursor
+                  ( Map.fromList
+                      [ ("customer.createdAt", "2026-03-16T13:10:02Z"),
+                        ("transactionNo", "tx_123")
+                      ]
+                  )
+              )
+          )
+          gq
+  case Aeson.eitherDecode payload of
+    Left err -> assertFailure err
+    Right (val :: Aeson.Value) ->
+      val
+        @?= Aeson.object
+          [ ("paginationKey", Aeson.String "customer.createdAt"),
+            ("query", Aeson.String gq.query),
+            ( "variables",
+              Aeson.object
+                [ ("orderBy", orderBy),
+                  ("rowLimit", Aeson.Number 100),
+                  ( "paginationCondition",
+                    Aeson.object
+                      [ ( "_or",
+                          Aeson.toJSON
+                            [ Aeson.object [("customer", Aeson.object [("createdAt", Aeson.object [("_lt", Aeson.String "2026-03-16T13:10:02Z")])])],
+                              Aeson.object
+                                [ ( "_and",
+                                    Aeson.toJSON
+                                      [ Aeson.object [("customer", Aeson.object [("createdAt", Aeson.object [("_eq", Aeson.String "2026-03-16T13:10:02Z")])])],
+                                        Aeson.object [("transactionNo", Aeson.object [("_lt", Aeson.String "tx_123")])]
                                       ]
                                   )
                                 ]
@@ -324,6 +449,7 @@ testDecodeResponsePage = do
       decodedResponsePageBytes decodedPage @?= LByteString.fromStrict "wt_777,2026-03-16T14:22:00Z\r\nwt_778,2026-03-16T14:23:00Z\r\n"
       decodedPage.rowCount @?= 2
       decodedPage.lastRow @?= Just (Map.fromList [("Payment Request ID", "wt_778"), ("Placed At", "2026-03-16T14:23:00Z")])
+      decodedPage.lastRawRow @?= Just (Aeson.object [("payment_request_id", Aeson.String "wt_778"), ("placed_at", Aeson.String "2026-03-16T14:23:00Z")])
 
 testDecodeResponseChunk :: IO ()
 testDecodeResponseChunk = do
@@ -496,6 +622,11 @@ compositePaginationFields :: NonEmpty PaginationField
 compositePaginationFields =
   PaginationField "createdAt" PaginationDesc
     :| [PaginationField "date" PaginationDesc, PaginationField "transactionNo" PaginationDesc]
+
+nestedPaginationFields :: NonEmpty PaginationField
+nestedPaginationFields =
+  PaginationField "customer.createdAt" PaginationDesc
+    :| [PaginationField "transactionNo" PaginationDesc]
 
 testClassifyResponseErrorRetry :: IO ()
 testClassifyResponseErrorRetry =
@@ -760,12 +891,12 @@ testExtractCursorMissingSelection = do
   extractCursor columnConfig root singleFieldPaginationFields row
     @?= Left (CursorColumnMissing "createdAt")
 
-testExtractCursorIgnoresNestedField :: IO ()
-testExtractCursorIgnoresNestedField = do
+testExtractCursorNestedField :: IO ()
+testExtractCursorNestedField = do
   root <- parseRootSelection nestedCursorQueryText
-  let row = Map.fromList [("createdAt", "2026-03-16T13:10:02Z")]
-  extractCursor mempty root singleFieldPaginationFields row
-    @?= Left (CursorColumnMissing "createdAt")
+  let row = Map.fromList [("customer", "2026-03-16T13:10:02Z")]
+  extractCursor mempty root (PaginationField "customer.createdAt" PaginationDesc :| []) row
+    @?= Right (PaginationCursor (Map.fromList [("customer.createdAt", "2026-03-16T13:10:02Z")]))
 
 testDecodeResponseRowsPassThrough :: IO ()
 testDecodeResponseRowsPassThrough = do
