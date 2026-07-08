@@ -30,8 +30,14 @@ fi
 # here; instead we apply the idempotent delta migrations directly. A fresh snapshot
 # (transient_db.sh create_temp_db) comes back at finance's schema level, so this
 # re-runs on every launch. All statements are ADD COLUMN / CREATE TABLE IF NOT
-# EXISTS, so re-applying is a no-op. Add new idempotent migrations to the list as
-# the branch introduces them.
+# EXISTS, so re-applying is a no-op.
+#
+# Only list ADDITIVE migrations that the runner code actually reads/writes (e.g.
+# order_by adds a column the insert path depends on). Do NOT list destructive
+# migrations such as drop_query_range_limit here: compare-finance-memory.sh runs a
+# baseline binary and a candidate binary against the SAME snapshot, and a baseline
+# built from a pre-removal ref still queries smart_csv.query_range_limit. Dropping
+# that table in snapshot prep would break the baseline run.
 SNAPSHOT_MIGRATIONS=(
   order_by
 )
