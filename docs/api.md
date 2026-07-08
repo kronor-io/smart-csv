@@ -96,6 +96,8 @@ When `orderBy` is supplied, the worker injects it into GraphQL variables for eve
 Range configuration is stored in `smart_csv.query_range_limit`.
 If no row exists for a root field, the service falls back to the built-in default of 33 days.
 
+CSV generation is also bounded at runtime. `CSV_GENERATION_TIMEOUT_SECONDS` defaults to 3600 seconds, and `CSV_GENERATION_MAX_ROWS` defaults to 1000000 rows. If either limit is exceeded, the report is marked `ERROR` with a descriptive message.
+
 **Other fields:**
 - `shardId` must be a positive integer
 - `recipient` must not be empty

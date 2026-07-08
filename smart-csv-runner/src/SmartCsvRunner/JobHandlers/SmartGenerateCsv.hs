@@ -47,6 +47,7 @@ import SmartCsvRunner.Job qualified as Job
 import SmartCsvRunner.Job.SmartCsvEnv (SmartCsvEnv (..))
 import SmartCsvRunner.MultipartUpload (EncodedCsvPage (..))
 import SmartCsvRunner.Job.Type (JobProcessor (..), subJobEnv)
+import System.Timeout qualified
 
 logSource :: LogSource
 logSource = "smart-csv-runner:SmartCsvRunner.JobHandlers.SmartGenerateCsv"
@@ -117,21 +118,34 @@ generateCSV payload = do
       authToken <- genTokenFromClaims tokenClaims
       httpManager <- liftIO $ Http.newManager Http.Tls.tlsManagerSettings
       let paginationFields = SmartCsvQuery.resolvePaginationFields gq
-      eSignedLink <-
-        tryAny
-          $ subJobEnv fst
-          $ Generate.generateCsv
-            (gqlQuery httpManager resolvedColumnConfig pId inferredRootField paginationFields authToken gq inferredRoot emptyMap (Vector.fromList (encodeUtf8 <$> inferredHeadersFromGql)) options.optionsGraphqlPageSize options.optionsGraphqlUrl)
-            (pure True)
-            (Vector.fromList (encodeUtf8 <$> inferredHeadersFromGql))
-            SmartCsv.encodePaginationCursor
-            fileKey
-            generatedCsvPayload
-      mSignedLink <- either throwM pure eSignedLink
+          generateAction =
+            subJobEnv fst
+              $ Generate.generateCsv
+                (gqlQuery httpManager resolvedColumnConfig pId inferredRootField paginationFields authToken gq inferredRoot emptyMap (Vector.fromList (encodeUtf8 <$> inferredHeadersFromGql)) options.optionsGraphqlPageSize options.optionsGraphqlUrl)
+                (pure True)
+                (Vector.fromList (encodeUtf8 <$> inferredHeadersFromGql))
+                SmartCsv.encodePaginationCursor
+                fileKey
+                options.optionsCsvGenerationMaxRows
+                generatedCsvPayload
+          timeoutMicros = max 0 options.optionsCsvGenerationTimeoutSeconds * 1_000_000
+      jobEnvForTimeout <- ask
+      mSignedLinkOrTimeout <- liftIO $ System.Timeout.timeout timeoutMicros (runRIO jobEnvForTimeout generateAction)
+      mSignedLink <- case mSignedLinkOrTimeout of
+        Nothing -> do
+          let msg = csvGenerationTimeoutMessage options.optionsCsvGenerationTimeoutSeconds
+          subJobEnv fst $ Generate.onError generatedCsvPayload msg
+          Job.giveupS logSource (display msg)
+        Just result -> pure result
       sendCsvDoneEmail recipient mSignedLink
     Failure errs -> do
       Job.giveupS logSource (displayBytesUtf8 (toStrictBytes (Aeson.encode errs)))
   where
+    csvGenerationTimeoutMessage timeoutSeconds =
+      "CSV generation exceeded timeout: maximum is "
+        <> tshow timeoutSeconds
+        <> " seconds"
+
     gqlCursor :: Job.PayloadId -> Selection RAW -> NonEmpty SmartCsv.PaginationField -> Aeson.Value -> SmartCsv.PaginationCursor
     gqlCursor pId rootSelection paginationFields v =
       case SmartCsv.extractCursorValue rootSelection paginationFields v of
