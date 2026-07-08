@@ -88,15 +88,10 @@ Content-Type: application/json
 **Query variables** must:
 - Be valid JSON
 - Contain a `conditions` object
-- Filter on the `graphqlPaginationKey` field in both directions using `_gte`/`_gt` and `_lt`/`_lte`
-- The date range must not exceed the configured limit for the query root field (fallback default is 33 days)
 
 When `orderBy` is supplied, the worker injects it into GraphQL variables for every page and uses the ordered fields as the cursor. The first ordered field must match `graphqlPaginationKey`; for nested fields use dot notation in `graphqlPaginationKey`, such as `customer.createdAt`.
 
-Range configuration is stored in `smart_csv.query_range_limit`.
-If no row exists for a root field, the service falls back to the built-in default of 33 days.
-
-CSV generation is also bounded at runtime. `CSV_GENERATION_TIMEOUT_SECONDS` defaults to 3600 seconds, and `CSV_GENERATION_MAX_ROWS` defaults to 1000000 rows. If either limit is exceeded, the report is marked `ERROR` with a descriptive message.
+CSV generation is bounded at runtime by row and time limits rather than by a query date-range check. `CSV_GENERATION_TIMEOUT_SECONDS` defaults to 3600 seconds, and `CSV_GENERATION_MAX_ROWS` defaults to 1000000 rows. If either limit is exceeded, the report is marked `ERROR` with a descriptive message.
 
 **Other fields:**
 - `shardId` must be a positive integer

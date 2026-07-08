@@ -67,8 +67,8 @@ tests =
       testCase "validateGraphqlQueryBodyAndGetRootField returns root field name" testValidateGraphqlQueryBodyAndGetRootFieldValid,
       testCase "validateGraphqlQueryBodyAndGetRootField ignores root alias" testValidateGraphqlQueryBodyAndGetRootFieldAlias,
       testCase "validateGraphqlQueryBodyAndGetRootField rejects non-field root selection" testValidateGraphqlQueryBodyAndGetRootFieldRejectsNonFieldRoot,
-      testCase "validateQueryVariables rejects too-wide range" testValidateQueryVariablesTooWide,
-      testCase "validateQueryVariables accepts bounded range" testValidateQueryVariablesValid,
+      testCase "validateQueryVariables rejects invalid JSON" testValidateQueryVariablesInvalidJson,
+      testCase "validateQueryVariables accepts valid JSON" testValidateQueryVariablesValid,
       testCase "parseColumnConfig converts JSON object to column config map" testParseColumnConfig,
       testCase "csvify with empty config auto-extracts scalar from single-key objects" testCsvifyPassThrough,
       testCase "csvify with empty config leaves multi-key objects blank" testCsvifyMultiKeyObject,
@@ -702,14 +702,14 @@ testValidateGraphqlQueryBodyAndGetRootFieldRejectsNonFieldRoot =
   SmartCsvValidation.validateGraphqlQueryBodyAndGetRootField fragmentOnlyRootQueryText
     @?= Left (pure "The query root must be a field selection.")
 
-testValidateQueryVariablesTooWide :: IO ()
-testValidateQueryVariablesTooWide =
-  SmartCsvValidation.validateQueryVariables (33 * 86400) "createdAt" "{\"conditions\":{\"createdAt\":{\"_gte\":\"2026-01-01T00:00:00Z\",\"_lt\":\"2026-03-01T00:00:00Z\"}}}"
-    @?= Left "The createdAt range is too wide. Maximum allowed range is 33 days."
+testValidateQueryVariablesInvalidJson :: IO ()
+testValidateQueryVariablesInvalidJson =
+  SmartCsvValidation.validateQueryVariables "not valid json"
+    @?= Left "Invalid JSON"
 
 testValidateQueryVariablesValid :: IO ()
 testValidateQueryVariablesValid =
-  case SmartCsvValidation.validateQueryVariables (33 * 86400) "createdAt" "{\"conditions\":{\"createdAt\":{\"_gte\":\"2026-03-01T00:00:00Z\",\"_lt\":\"2026-03-15T00:00:00Z\"}}}" of
+  case SmartCsvValidation.validateQueryVariables "{\"conditions\":{\"createdAt\":{\"_gte\":\"2026-03-01T00:00:00Z\",\"_lt\":\"2026-03-15T00:00:00Z\"}}}" of
     Left err -> assertFailure (show err)
     Right _ -> pure ()
 

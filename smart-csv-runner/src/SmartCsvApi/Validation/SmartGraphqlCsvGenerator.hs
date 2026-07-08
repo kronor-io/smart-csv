@@ -7,7 +7,6 @@ where
 import Data.Aeson (Value)
 import Data.Aeson qualified as JSON
 import Data.Aeson.Key qualified as JSON
-import Data.Time (nominalDay)
 import Kronor.Db.Models.Shard (ShardId (..))
 import Kronor.Db.Types.Bigint (Bigint (..))
 import Kronor.SmartCsv.Pagination qualified as SmartCsvPagination
@@ -30,10 +29,9 @@ data SmartGraphqlCsvGenerator = SmartGraphqlCsvGenerator
 
 -- | Validate the SmartGraphqlCsvGeneratorInput
 validateSmartGraphqlCsvGeneratorInput ::
-  Int ->
   SmartGraphqlCsvGeneratorInput ->
   Either String SmartGraphqlCsvGenerator
-validateSmartGraphqlCsvGeneratorInput maxRangeDays input = do
+validateSmartGraphqlCsvGeneratorInput input = do
   -- Validate shard ID (must be positive)
   case input.shardId of
     Bigint n | n <= 0 -> Left "shardId must be a positive number"
@@ -48,10 +46,8 @@ validateSmartGraphqlCsvGeneratorInput maxRangeDays input = do
     Left validationError -> Left $ "Invalid GraphQL query body: " <> Text.unpack (Text.intercalate ", " $ toList validationError)
     Right _ -> pure ()
 
-  let maxRange = fromIntegral maxRangeDays * nominalDay
-
-  -- Validate using SmartCsvValidation
-  queryVariables <- case SmartCsvValidation.validateQueryVariables maxRange graphqlPaginationKey input.graphqlQueryVariables of
+  -- Parse the query variables JSON (row/time limits bound the job at generation time)
+  queryVariables <- case SmartCsvValidation.validateQueryVariables input.graphqlQueryVariables of
     Left validationError -> Left $ "Invalid GraphQL query variables: " <> Text.unpack validationError
     Right vars -> Right vars
 

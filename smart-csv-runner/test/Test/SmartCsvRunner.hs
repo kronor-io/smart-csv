@@ -44,8 +44,6 @@ tests =
           testCase "input json decoding accepts payload with columnConfigName" testInputJsonDecodeWithColumnConfigName,
           testCase "validation rejects both columnConfig and columnConfigName" testValidationRejectsBothColumnConfigs,
           testCase "validation rejects orderBy that does not start with pagination key" testValidationRejectsOrderByMismatch,
-          testCase "validation uses provided max range" testValidationUsesProvidedMaxRange,
-          testCase "validation accepts range within provided max range" testValidationAcceptsRangeWithinProvidedMaxRange,
           testCase "verifyBearerToken rejects invalid signature" testVerifyBearerTokenInvalidSig,
           testCase "verifyBearerToken accepts valid token" testVerifyBearerTokenValid,
           testCase "signJwtFromClaims produces verifiable token claims" testSignJwtFromClaimsRoundtrip
@@ -112,12 +110,12 @@ testGenerateEndpointValidationError = do
   let body = WaiTest.simpleBody response
   case Aeson.decode body of
     Just (Aeson.Object errObj) -> do
-      let expected = "Validation error: Invalid GraphQL query variables: The date range is too wide. Maximum allowed range is 33 days."
+      let expected = "Validation error: Invalid GraphQL query variables: Invalid JSON"
       KeyMap.lookup "message" errObj @?= Just (Aeson.String expected)
       KeyMap.lookup "error" errObj @?= Just (Aeson.String expected)
     _ -> assertFailure ("Expected JSON object body, got: " <> LB8.unpack body)
   where
-    app = RestServer.mkApplicationWith (\_ _ -> pure (Left "Validation error: Invalid GraphQL query variables: The date range is too wide. Maximum allowed range is 33 days."))
+    app = RestServer.mkApplicationWith (\_ _ -> pure (Left "Validation error: Invalid GraphQL query variables: Invalid JSON"))
     request =
       defaultRequest
         { requestMethod = "POST",
@@ -209,7 +207,7 @@ testValidationRejectsBothColumnConfigs = do
           { columnConfig = Just (Aeson.object [("field_a", Aeson.object [("header", Aeson.String "Column A")])]),
             columnConfigName = Just "payment_requests"
           }
-  Val.validateSmartGraphqlCsvGeneratorInput 33 input
+  Val.validateSmartGraphqlCsvGeneratorInput input
     @?= Left "Cannot specify both columnConfig and columnConfigName"
 
 testValidationRejectsOrderByMismatch :: IO ()
@@ -224,29 +222,8 @@ testValidationRejectsOrderByMismatch = do
                     ]
                 )
           }
-  Val.validateSmartGraphqlCsvGeneratorInput 33 input
+  Val.validateSmartGraphqlCsvGeneratorInput input
     @?= Left "The first orderBy field must match graphqlPaginationKey"
-
-testValidationUsesProvidedMaxRange :: IO ()
-testValidationUsesProvidedMaxRange = do
-  let input =
-        mkInput
-          { graphqlQueryVariables =
-              "{\"conditions\":{\"createdAt\":{\"_gte\":\"2026-03-01T00:00:00Z\",\"_lt\":\"2026-03-21T00:00:00Z\"}}}"
-          }
-  Val.validateSmartGraphqlCsvGeneratorInput 14 input
-    @?= Left "Invalid GraphQL query variables: The createdAt range is too wide. Maximum allowed range is 14 days."
-
-testValidationAcceptsRangeWithinProvidedMaxRange :: IO ()
-testValidationAcceptsRangeWithinProvidedMaxRange = do
-  let input =
-        mkInput
-          { graphqlQueryVariables =
-              "{\"conditions\":{\"createdAt\":{\"_gte\":\"2026-03-01T00:00:00Z\",\"_lt\":\"2026-03-21T00:00:00Z\"}}}"
-          }
-  case Val.validateSmartGraphqlCsvGeneratorInput 33 input of
-    Left err -> assertFailure err
-    Right _ -> pure ()
 
 testVerifyBearerTokenInvalidSig :: IO ()
 testVerifyBearerTokenInvalidSig = do
