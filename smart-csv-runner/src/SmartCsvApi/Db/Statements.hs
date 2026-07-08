@@ -1,13 +1,12 @@
 module SmartCsvApi.Db.Statements
   ( insertSmartGraphqlCsvGenerator,
-    selectQueryMaxRangeDaysByRoot,
     setTransactionContext,
   )
 where
 
 import Data.Aeson qualified as Aeson
 import Hasql.Statement (Statement)
-import Hasql.TH (maybeStatement, resultlessStatement, singletonStatement)
+import Hasql.TH (resultlessStatement, singletonStatement)
 import RIO
 
 -- | Insert a smart GraphQL CSV generator request into the database.
@@ -51,14 +50,6 @@ insertSmartGraphqlCsvGenerator =
         from gcsv
         returning id::bigint
     |]
-
-selectQueryMaxRangeDaysByRoot :: Statement Text (Maybe Int32)
-selectQueryMaxRangeDaysByRoot =
-  [maybeStatement|
-        select max_range_days::int4
-        from smart_csv.query_range_limit
-        where root_name = $1::text
-      |]
 
 -- | Set the transaction-local request ID and trace context required by
 -- job_queue.enqueue_payload and other DB functions.

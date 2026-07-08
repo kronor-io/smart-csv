@@ -1,5 +1,3 @@
-{-# LANGUAGE OrPatterns #-}
-
 module Kronor.SmartCsv.Validation
   ( validateGraphqlQueryBody,
     validateGraphqlQueryBodyAndGetRootField,
@@ -8,9 +6,6 @@ module Kronor.SmartCsv.Validation
 where
 
 import Data.Aeson qualified as JSON
-import Data.Aeson.Key qualified as Key
-import Data.Aeson.KeyMap qualified as KeyMap
-import Data.Aeson.Types qualified as JSON
 import Data.ByteString.Lazy qualified as LB
 import Data.Foldable qualified as Foldable
 import Data.List.NonEmpty qualified as NE
@@ -19,8 +14,6 @@ import Data.Morpheus.Internal.Ext (Result (..))
 import Data.Morpheus.Internal.Utils (IsMap (member))
 import Data.Morpheus.Types.IO (GQLRequest (..))
 import Data.Morpheus.Types.Internal.AST (ExecutableDocument (..), Operation (..), RAW, Selection (..), unpackName)
-import Data.Text qualified as Text
-import Data.Time
 import RIO
 
 validateGraphqlQueryBody :: Text -> Either (NonEmpty Text) ()
@@ -52,100 +45,10 @@ validateGraphqlQueryBodyAndGetRootField graphqlQueryBody =
     rootSelectionName Selection {selectionName} = Just (unpackName selectionName)
     rootSelectionName _ = Nothing
 
-validateQueryVariables :: NominalDiffTime -> Key.Key -> Text -> Either Text JSON.Value
-validateQueryVariables maxRange paginationKey queryVariablesText =
+-- | Parse the GraphQL query variables JSON. Row and time limits now bound export
+-- jobs at generation time, so the query's date range is no longer validated here.
+validateQueryVariables :: Text -> Either Text JSON.Value
+validateQueryVariables queryVariablesText =
   case JSON.decode (LB.fromStrict (encodeUtf8 queryVariablesText)) of
     Nothing -> Left "Invalid JSON"
-    Just queryVariables ->
-      let limits = utcTimeLimits paginationKey queryVariables
-       in case (limits.lo, limits.hi) of
-            (Just lo, Just hi) ->
-              if hi < lo
-                then Left ("The " <> Key.toText paginationKey <> " range is invalid: upper bound is earlier than lower bound.")
-                else
-                  if diffUTCTime hi lo <= maxRange
-                    then Right queryVariables
-                    else Left ("The " <> Key.toText paginationKey <> " range is too wide. Maximum allowed range is " <> tshow (ceiling (maxRange / nominalDay) :: Integer) <> " days.")
-            _ ->
-              Left
-                ( mconcat
-                    [ "The query must filter on ",
-                      Key.toText paginationKey,
-                      " in both directions, but found: ",
-                      "hi: ",
-                      tshow limits.hi,
-                      ", lo: ",
-                      tshow limits.lo,
-                      "in: ",
-                      queryVariablesText
-                    ]
-                )
-
-data Limits = Limits
-  { -- found in _gt or _gte
-    lo :: Maybe UTCTime,
-    -- found in _lt or _lte
-    hi :: Maybe UTCTime
-  }
-
-joinMaybe :: (a -> a -> a) -> Maybe a -> Maybe a -> Maybe a
-joinMaybe _ Nothing y = y
-joinMaybe _ x Nothing = x
-joinMaybe f (Just x) (Just y) = Just (f x y)
-
-maxMaybe :: (Ord a) => Maybe a -> Maybe a -> Maybe a
-maxMaybe = joinMaybe max
-
-minMaybe :: (Ord a) => Maybe a -> Maybe a -> Maybe a
-minMaybe = joinMaybe min
-
-instance Semigroup Limits where
-  (Limits lo1 hi1) <> (Limits lo2 hi2) =
-    Limits (maxMaybe lo1 lo2) (minMaybe hi1 hi2)
-
-instance Monoid Limits where
-  mempty = Limits Nothing Nothing
-  mappend = (<>)
-
-utcTimeLimits :: Key.Key -> JSON.Value -> Limits
-utcTimeLimits k = \case
-  JSON.Object o -> maybe mempty andLimits (KeyMap.lookup "conditions" o)
-  _ -> mempty
-  where
-    andLimits :: JSON.Value -> Limits
-    andLimits = \case
-      JSON.Object o ->
-        mkLimits o
-          <> ( case KeyMap.lookup "_and" o of
-                 Just (JSON.Array as) -> foldMap andLimits as
-                 (Just _; Nothing) -> mempty
-             )
-      _ -> mempty
-
-    mkLimits :: KeyMap.KeyMap JSON.Value -> Limits
-    mkLimits cond =
-      Limits
-        { lo = maxMaybe (lookupOp "_gte") (lookupOp "_gt"),
-          hi = minMaybe (lookupOp "_lte") (lookupOp "_lt")
-        }
-      where
-        lookupOp :: Key.Key -> Maybe UTCTime
-        lookupOp op =
-          KeyMap.lookup k cond
-            >>= asObject
-            >>= KeyMap.lookup op
-            >>= parseTimeValue
-
-        parseTimeValue :: JSON.Value -> Maybe UTCTime
-        parseTimeValue val = JSON.parseMaybe JSON.parseJSON val <|> parseTimeString val
-
-        parseTimeString :: JSON.Value -> Maybe UTCTime
-        parseTimeString (JSON.String s) =
-          let str = Text.unpack s
-          in parseTimeM False defaultTimeLocale "%Y-%m-%d" str <|>
-             parseTimeM False defaultTimeLocale "%Y-%m-%dT%H:%M:%S%Q" str
-        parseTimeString _ = Nothing
-
-    asObject :: JSON.Value -> Maybe (KeyMap.KeyMap JSON.Value)
-    asObject (JSON.Object o) = Just o
-    asObject _ = Nothing
+    Just queryVariables -> Right queryVariables
