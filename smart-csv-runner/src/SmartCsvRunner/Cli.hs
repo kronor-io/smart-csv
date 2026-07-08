@@ -30,7 +30,7 @@ import SmartCsvRunner.Env (Options (..))
 import SmartCsvRunner.Job (JobEnv (..), PayloadId (..), giveupS)
 import SmartCsvRunner.Job qualified as Job
 import SmartCsvRunner.Job.Payload qualified as Payload
-import SmartCsvRunner.Job.SmartCsvEnv (SmartCsvEnv)
+import SmartCsvRunner.Job.SmartCsvEnv (SmartCsvEnv (..))
 import SmartCsvRunner.Job.Type (JobPayloadAnnotation (..), JobProcessorF (..), jobName)
 import SmartCsvRunner.JobHandlers.Email qualified as Email
 import Streamly.Data.Fold qualified as Fold
@@ -132,12 +132,27 @@ workerLoop dequeuerPool listenerConn retries = do
 dequeueJob :: Hasql.Pool.Pool -> Int -> Job.Job SmartCsvEnv ()
 dequeueJob pool retries = do
   env <- ask
+  let options = smartCsvOptions (jobEnv env)
+      idleInTxTimeoutMs = dequeueIdleTxTimeoutMs (optionsCsvGenerationTimeoutSeconds options)
   result <- liftIO $ Hasql.Pool.withConn pool $ \conn ->
-    runRIO env $ Dequeuer.withDequeue conn retries (pure False) doJob
+    runRIO env $ Dequeuer.withDequeue conn retries idleInTxTimeoutMs (pure False) doJob
   case result of
     Left err -> do
       logErrorS "smart-csv-runner:Cli" ("Dequeuer pool error: " <> displayShow err)
     Right () -> pure ()
+
+-- | idle_in_transaction_session_timeout (ms) for the dequeue transaction. The
+-- dequeue connection stays idle-in-transaction for the whole job, so this must
+-- outlast the longest a job can run — bounded by CSV_GENERATION_TIMEOUT_SECONDS —
+-- plus a buffer for the surrounding dequeue/commit work. A job timeout of <= 0
+-- means "no limit", so the idle timeout is disabled (0) as well.
+dequeueIdleTxTimeoutMs :: Int -> Int
+dequeueIdleTxTimeoutMs jobTimeoutSeconds
+  | jobTimeoutSeconds <= 0 = 0
+  | otherwise = (jobTimeoutSeconds + dequeueIdleTxBufferSeconds) * 1000
+
+dequeueIdleTxBufferSeconds :: Int
+dequeueIdleTxBufferSeconds = 300
 
 doJob :: (HasCallStack) => Payload.Payload -> Job.Job SmartCsvEnv ()
 doJob payload =
