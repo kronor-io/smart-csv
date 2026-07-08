@@ -46,14 +46,16 @@ withDequeue ::
     Connection ->
     -- | Retry count
     Int ->
+    -- | idle_in_transaction_session_timeout (ms) applied to the dequeue transaction; 0 disables it
+    Int ->
     -- | If True stop execution
     RIO env Bool ->
     -- | Continuation
     (I.Payload -> RIO env ()) ->
     RIO env ()
-withDequeue conn retryCount shouldStop f = do
+withDequeue conn retryCount idleInTxTimeoutMs shouldStop f = do
     let action env =
-            withDequeuePayloadId retryCount (runRIO env . f)
+            withDequeuePayloadId retryCount idleInTxTimeoutMs (runRIO env . f)
 
     AnnException.catches
         do
@@ -177,13 +179,23 @@ deleteJob pId =
 
 withDequeuePayloadId ::
     Int ->
+    Int ->
     (I.Payload -> IO b) ->
     Connection ->
     IO ()
-withDequeuePayloadId retryCount f conn = do
+withDequeuePayloadId retryCount idleInTxTimeoutMs f conn = do
     bracket
         ( do
             I.runThrow (Hasql.Session.sql "BEGIN") conn
+            -- The job runs to completion inside this transaction while its own
+            -- DB work goes to other pools, so this connection is idle-in-transaction
+            -- for the whole job. Raise the server's idle-in-transaction timeout for
+            -- this transaction (e.g. finance sets it to 10s) to comfortably outlast a
+            -- full job, so long-running jobs are not killed mid-flight, which would
+            -- roll back the dequeue and let the job be re-processed concurrently. The
+            -- value is derived from CSV_GENERATION_TIMEOUT_SECONDS by the caller (0
+            -- disables the timeout). SET LOCAL resets at COMMIT/ROLLBACK.
+            I.runThrow (Hasql.Session.sql [iii|SET LOCAL idle_in_transaction_session_timeout = #{idleInTxTimeoutMs}|]) conn
             ex <- Hasql.Session.run I.dequeuePayload conn
             case ex of
                 Left _ -> pure Nothing
