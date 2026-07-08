@@ -27,6 +27,8 @@ Optional:
   --shard-id ID               Override shardId if the request file does not contain it
   --recipient EMAIL           Override recipient if the request file does not contain it
   --timeout-seconds N         Wait time for job completion per run (default: 600)
+  --csv-generation-max-rows N       CSV_GENERATION_MAX_ROWS for both runs (default: env/code default)
+  --csv-generation-timeout-seconds N  CSV_GENERATION_TIMEOUT_SECONDS for both runs (default: env/code default)
   --keep-worktree             Keep the temporary baseline worktree
   --help                      Show this help
 
@@ -761,6 +763,8 @@ AUTHORIZATION_HEADER=""
 SHARD_ID_OVERRIDE=""
 RECIPIENT_OVERRIDE=""
 TIMEOUT_SECONDS=600
+CSV_GENERATION_MAX_ROWS_OVERRIDE=""
+CSV_GENERATION_TIMEOUT_SECONDS_OVERRIDE=""
 KEEP_WORKTREE=0
 RUNNER_PID=""
 BASELINE_WORKTREE=""
@@ -801,6 +805,14 @@ while [ "$#" -gt 0 ]; do
       ;;
     --timeout-seconds)
       TIMEOUT_SECONDS="$2"
+      shift 2
+      ;;
+    --csv-generation-max-rows)
+      CSV_GENERATION_MAX_ROWS_OVERRIDE="$2"
+      shift 2
+      ;;
+    --csv-generation-timeout-seconds)
+      CSV_GENERATION_TIMEOUT_SECONDS_OVERRIDE="$2"
       shift 2
       ;;
     --keep-worktree)
@@ -921,6 +933,18 @@ fi
 
 printf '%s\n' "$BASELINE_BINARY" >"$OUTPUT_DIR/baseline-binary.txt"
 printf '%s\n' "$CANDIDATE_BINARY" >"$OUTPUT_DIR/candidate-binary.txt"
+
+# Apply CSV generation limit overrides to both runs (baseline and candidate share
+# the same env). finance-snapshot-env.sh reads these with ${VAR:-default}, so an
+# exported override here wins over the in-script default.
+if [ -n "$CSV_GENERATION_MAX_ROWS_OVERRIDE" ]; then
+  export CSV_GENERATION_MAX_ROWS="$CSV_GENERATION_MAX_ROWS_OVERRIDE"
+  log "Using CSV_GENERATION_MAX_ROWS=$CSV_GENERATION_MAX_ROWS"
+fi
+if [ -n "$CSV_GENERATION_TIMEOUT_SECONDS_OVERRIDE" ]; then
+  export CSV_GENERATION_TIMEOUT_SECONDS="$CSV_GENERATION_TIMEOUT_SECONDS_OVERRIDE"
+  log "Using CSV_GENERATION_TIMEOUT_SECONDS=$CSV_GENERATION_TIMEOUT_SECONDS"
+fi
 
 run_profile baseline "$BASELINE_BINARY" "$OUTPUT_DIR/baseline"
 run_profile candidate "$CANDIDATE_BINARY" "$OUTPUT_DIR/candidate"

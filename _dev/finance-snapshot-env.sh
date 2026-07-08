@@ -18,6 +18,12 @@ export DB_REPLICA_CSV_URL="${DB_REPLICA_CSV_URL:-$SNAPSHOT_URL}"
 export API_PORT="${API_PORT:-8000}"
 export GRAPHQL_URL="${GRAPHQL_URL:-http://localhost:8080/v1/graphql}"
 export PORTAL_URL="${PORTAL_URL:-http://localhost:3000}"
+
+# CSV generation limits (from feature/row-and-time-limits). Defaults match the
+# in-code defaults in SmartCsvRunner.Env; override in .envrc.local or via the
+# --csv-generation-* flags of compare-finance-memory.sh to exercise the caps.
+export CSV_GENERATION_TIMEOUT_SECONDS="${CSV_GENERATION_TIMEOUT_SECONDS:-3600}"
+export CSV_GENERATION_MAX_ROWS="${CSV_GENERATION_MAX_ROWS:-1000000}"
 # JWT_SECRET must be base64-encoded (the jose library base64-decodes it to get the HMAC key).
 # The raw key is the same as graphql.jwt_secret in the database / Hasura config.
 if [ -z "${JWT_SECRET:-}" ]; then

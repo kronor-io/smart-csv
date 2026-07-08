@@ -24,4 +24,21 @@ if [ ! -f "$BINARY_PATH" ]; then
   exit 1
 fi
 
+# Apply smart-csv migrations that are missing from the finance-vendored snapshot
+# schema. The snapshot's smart_csv schema is created by finance's own migrations
+# and is not tracked in this repo's sqitch registry, so we cannot `sqitch deploy`
+# here; instead we apply the idempotent delta migrations directly. A fresh snapshot
+# (transient_db.sh create_temp_db) comes back at finance's schema level, so this
+# re-runs on every launch. All statements are ADD COLUMN / CREATE TABLE IF NOT
+# EXISTS, so re-applying is a no-op. Add new idempotent migrations to the list as
+# the branch introduces them.
+SNAPSHOT_MIGRATIONS=(
+  order_by
+)
+
+echo "Applying smart-csv snapshot migrations: ${SNAPSHOT_MIGRATIONS[*]}" >&2
+for migration in "${SNAPSHOT_MIGRATIONS[@]}"; do
+  psql "$FINANCE_SNAPSHOT_DB_URL" -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/database/deploy/$migration.sql"
+done
+
 exec "$BINARY_PATH" "$@"

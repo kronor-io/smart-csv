@@ -41,6 +41,7 @@ Each run keeps its local CSV file, heap profile, GC log, eventlog, stdout log, r
 2. Check whether the candidate binary must be rebuilt.
 3. Build the candidate binary when the touched code affects `smart-csv` or `smart-csv-runner`.
 4. Run the finance benchmark with `bash _dev/compare-finance-memory.sh --request-json request.json`.
+   - To exercise the row/time caps from `feature/row-and-time-limits`, add `--csv-generation-max-rows N` and/or `--csv-generation-timeout-seconds N` (both runs share the value). Without them the runner uses the in-code defaults (1000000 rows / 3600 s).
 5. Read the generated `comparison.md`, `csv-comparison.json`, and the per-run summary JSON files.
 6. Report the peak heap comparison, CSV equality result, and the artifact directory.
 
