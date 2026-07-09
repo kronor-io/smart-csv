@@ -128,9 +128,14 @@ generateCSV payload = do
                 fileKey
                 options.optionsCsvGenerationMaxRows
                 generatedCsvPayload
-          timeoutMicros = max 0 options.optionsCsvGenerationTimeoutSeconds * 1_000_000
+            timeoutSeconds = options.optionsCsvGenerationTimeoutSeconds
       jobEnvForTimeout <- ask
-      mSignedLinkOrTimeout <- liftIO $ System.Timeout.timeout timeoutMicros (runRIO jobEnvForTimeout generateAction)
+      mSignedLinkOrTimeout <-
+        if timeoutSeconds <= 0
+          then Just <$> liftIO (runRIO jobEnvForTimeout generateAction)
+          else do
+            let timeoutMicros = timeoutSeconds * 1_000_000
+            liftIO $ System.Timeout.timeout timeoutMicros (runRIO jobEnvForTimeout generateAction)
       mSignedLink <- case mSignedLinkOrTimeout of
         Nothing -> do
           let msg = csvGenerationTimeoutMessage options.optionsCsvGenerationTimeoutSeconds
