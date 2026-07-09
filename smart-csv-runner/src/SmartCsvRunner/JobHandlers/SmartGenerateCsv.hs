@@ -128,7 +128,7 @@ generateCSV payload = do
                 fileKey
                 options.optionsCsvGenerationMaxRows
                 generatedCsvPayload
-            timeoutSeconds = options.optionsCsvGenerationTimeoutSeconds
+          timeoutSeconds = options.optionsCsvGenerationTimeoutSeconds
       jobEnvForTimeout <- ask
       mSignedLinkOrTimeout <-
         if timeoutSeconds <= 0
