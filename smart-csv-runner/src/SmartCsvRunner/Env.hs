@@ -259,7 +259,7 @@ instance HasParser Options where
         setting
           [ help "CSV generation timeout in seconds",
             long "csv-generation-timeout-seconds",
-            value 3600,
+            value 1800,
             reader auto,
             metavar "CSV_GENERATION_TIMEOUT_SECONDS",
             option,

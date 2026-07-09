@@ -91,7 +91,7 @@ Content-Type: application/json
 
 When `orderBy` is supplied, the worker injects it into GraphQL variables for every page and uses the ordered fields as the cursor. The first ordered field must match `graphqlPaginationKey`; for nested fields use dot notation in `graphqlPaginationKey`, such as `customer.createdAt`.
 
-CSV generation is bounded at runtime by row and time limits rather than by a query date-range check. `CSV_GENERATION_TIMEOUT_SECONDS` defaults to 3600 seconds, and `CSV_GENERATION_MAX_ROWS` defaults to 1000000 rows. If either limit is exceeded, the report is marked `ERROR` with a descriptive message.
+CSV generation is bounded at runtime by row and time limits rather than by a query date-range check. `CSV_GENERATION_TIMEOUT_SECONDS` defaults to 1800 seconds, and `CSV_GENERATION_MAX_ROWS` defaults to 1000000 rows. If either limit is exceeded, the report is marked `ERROR` with a descriptive message.
 
 **Other fields:**
 - `shardId` must be a positive integer
