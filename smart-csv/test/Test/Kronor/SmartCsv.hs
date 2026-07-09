@@ -68,6 +68,7 @@ tests =
       testCase "validateGraphqlQueryBodyAndGetRootField ignores root alias" testValidateGraphqlQueryBodyAndGetRootFieldAlias,
       testCase "validateGraphqlQueryBodyAndGetRootField rejects non-field root selection" testValidateGraphqlQueryBodyAndGetRootFieldRejectsNonFieldRoot,
       testCase "validateQueryVariables rejects invalid JSON" testValidateQueryVariablesInvalidJson,
+      testCase "validateQueryVariables rejects non-object JSON" testValidateQueryVariablesNonObject,
       testCase "validateQueryVariables accepts valid JSON" testValidateQueryVariablesValid,
       testCase "parseColumnConfig converts JSON object to column config map" testParseColumnConfig,
       testCase "csvify with empty config auto-extracts scalar from single-key objects" testCsvifyPassThrough,
@@ -706,6 +707,11 @@ testValidateQueryVariablesInvalidJson :: IO ()
 testValidateQueryVariablesInvalidJson =
   SmartCsvValidation.validateQueryVariables "not valid json"
     @?= Left "Invalid JSON"
+
+testValidateQueryVariablesNonObject :: IO ()
+testValidateQueryVariablesNonObject =
+  SmartCsvValidation.validateQueryVariables "[1,2,3]"
+    @?= Left "Query variables must be a JSON object"
 
 testValidateQueryVariablesValid :: IO ()
 testValidateQueryVariablesValid =

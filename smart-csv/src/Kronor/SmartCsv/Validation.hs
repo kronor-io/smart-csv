@@ -47,8 +47,12 @@ validateGraphqlQueryBodyAndGetRootField graphqlQueryBody =
 
 -- | Parse the GraphQL query variables JSON. Row and time limits now bound export
 -- jobs at generation time, so the query's date range is no longer validated here.
+-- The value must be a JSON object: pagination variables (rowLimit,
+-- paginationCondition, injected orderBy) are merged into it, so a non-object would
+-- silently drop them and fail the job later in a less obvious way.
 validateQueryVariables :: Text -> Either Text JSON.Value
 validateQueryVariables queryVariablesText =
   case JSON.decode (LB.fromStrict (encodeUtf8 queryVariablesText)) of
     Nothing -> Left "Invalid JSON"
-    Just queryVariables -> Right queryVariables
+    Just queryVariables@(JSON.Object _) -> Right queryVariables
+    Just _ -> Left "Query variables must be a JSON object"
