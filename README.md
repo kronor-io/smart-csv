@@ -130,7 +130,7 @@ The service reads configuration from environment variables. See `_dev/smart-csv-
 - `KRONOR_SMART_CSV_PGPOOL_CONNSTRING` — Postgres connection string
 - `KRONOR_SMART_CSV_HTTP_PORT` — REST API port (default: 8000)
 - `KRONOR_SMART_CSV_GRAPHQL_ENDPOINT` — Hasura GraphQL endpoint
-- `CSV_GENERATION_TIMEOUT_SECONDS` — Maximum runtime for one CSV generation job (default: 3600)
+- `CSV_GENERATION_TIMEOUT_SECONDS` — Maximum runtime for one CSV generation job (default: 1800)
 - `CSV_GENERATION_MAX_ROWS` — Maximum rows processed for one CSV generation job (default: 1000000)
 - `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` — S3 credentials
 - `KRONOR_SMART_CSV_S3_BUCKET` — S3 bucket name
