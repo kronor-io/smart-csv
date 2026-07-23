@@ -38,12 +38,12 @@ tests =
           testCase "generate endpoint rejects malformed JSON" testGenerateEndpointMalformedJson,
           testCase "generate endpoint rejects missing auth header" testGenerateEndpointMissingAuth,
           testCase "input json decoding accepts valid payload" testInputJsonDecodeValid,
+          testCase "input json decoding accepts top-level orderBy" testInputJsonDecodeWithOrderBy,
           testCase "input json decoding fails when required field is missing" testInputJsonDecodeMissingField,
           testCase "input json decoding accepts payload with inline columnConfig" testInputJsonDecodeWithColumnConfig,
           testCase "input json decoding accepts payload with columnConfigName" testInputJsonDecodeWithColumnConfigName,
           testCase "validation rejects both columnConfig and columnConfigName" testValidationRejectsBothColumnConfigs,
-          testCase "validation uses provided max range" testValidationUsesProvidedMaxRange,
-          testCase "validation accepts range within provided max range" testValidationAcceptsRangeWithinProvidedMaxRange,
+          testCase "validation rejects orderBy that does not start with pagination key" testValidationRejectsOrderByMismatch,
           testCase "verifyBearerToken rejects invalid signature" testVerifyBearerTokenInvalidSig,
           testCase "verifyBearerToken accepts valid token" testVerifyBearerTokenValid,
           testCase "signJwtFromClaims produces verifiable token claims" testSignJwtFromClaimsRoundtrip
@@ -57,6 +57,7 @@ mkInput =
     { shardId = Bigint 42,
       recipient = "ops@kronor.io",
       graphqlPaginationKey = "createdAt",
+      orderBy = Nothing,
       graphqlQueryBody =
         "query ($rowLimit: Int!, $paginationCondition: paymentRequests_bool_exp!) { \
         \  paymentRequests(limit: $rowLimit, where: $paginationCondition) { payment_request_id: waitToken } \
@@ -109,12 +110,12 @@ testGenerateEndpointValidationError = do
   let body = WaiTest.simpleBody response
   case Aeson.decode body of
     Just (Aeson.Object errObj) -> do
-      let expected = "Validation error: Invalid GraphQL query variables: The date range is too wide. Maximum allowed range is 33 days."
+      let expected = "Validation error: Invalid GraphQL query variables: Invalid JSON"
       KeyMap.lookup "message" errObj @?= Just (Aeson.String expected)
       KeyMap.lookup "error" errObj @?= Just (Aeson.String expected)
     _ -> assertFailure ("Expected JSON object body, got: " <> LB8.unpack body)
   where
-    app = RestServer.mkApplicationWith (\_ _ -> pure (Left "Validation error: Invalid GraphQL query variables: The date range is too wide. Maximum allowed range is 33 days."))
+    app = RestServer.mkApplicationWith (\_ _ -> pure (Left "Validation error: Invalid GraphQL query variables: Invalid JSON"))
     request =
       defaultRequest
         { requestMethod = "POST",
@@ -167,6 +168,18 @@ testInputJsonDecodeValid = do
   let payload = Aeson.encode mkInput
   Aeson.eitherDecode payload @?= Right mkInput
 
+testInputJsonDecodeWithOrderBy :: IO ()
+testInputJsonDecodeWithOrderBy = do
+  let orderBy =
+        Aeson.toJSON
+          [ Aeson.object [("createdAt", Aeson.String "DESC")],
+            Aeson.object [("date", Aeson.String "DESC")],
+            Aeson.object [("transactionNo", Aeson.String "DESC")]
+          ]
+      input = mkInput {orderBy = Just orderBy}
+      payload = Aeson.encode input
+  Aeson.eitherDecode payload @?= Right input
+
 testInputJsonDecodeMissingField :: IO ()
 testInputJsonDecodeMissingField = do
   let payload =
@@ -194,29 +207,23 @@ testValidationRejectsBothColumnConfigs = do
           { columnConfig = Just (Aeson.object [("field_a", Aeson.object [("header", Aeson.String "Column A")])]),
             columnConfigName = Just "payment_requests"
           }
-  Val.validateSmartGraphqlCsvGeneratorInput 33 input
+  Val.validateSmartGraphqlCsvGeneratorInput input
     @?= Left "Cannot specify both columnConfig and columnConfigName"
 
-testValidationUsesProvidedMaxRange :: IO ()
-testValidationUsesProvidedMaxRange = do
+testValidationRejectsOrderByMismatch :: IO ()
+testValidationRejectsOrderByMismatch = do
   let input =
         mkInput
-          { graphqlQueryVariables =
-              "{\"conditions\":{\"createdAt\":{\"_gte\":\"2026-03-01T00:00:00Z\",\"_lt\":\"2026-03-21T00:00:00Z\"}}}"
+          { orderBy =
+              Just
+                ( Aeson.toJSON
+                    [ Aeson.object [("date", Aeson.String "DESC")],
+                      Aeson.object [("transactionNo", Aeson.String "DESC")]
+                    ]
+                )
           }
-  Val.validateSmartGraphqlCsvGeneratorInput 14 input
-    @?= Left "Invalid GraphQL query variables: The createdAt range is too wide. Maximum allowed range is 14 days."
-
-testValidationAcceptsRangeWithinProvidedMaxRange :: IO ()
-testValidationAcceptsRangeWithinProvidedMaxRange = do
-  let input =
-        mkInput
-          { graphqlQueryVariables =
-              "{\"conditions\":{\"createdAt\":{\"_gte\":\"2026-03-01T00:00:00Z\",\"_lt\":\"2026-03-21T00:00:00Z\"}}}"
-          }
-  case Val.validateSmartGraphqlCsvGeneratorInput 33 input of
-    Left err -> assertFailure err
-    Right _ -> pure ()
+  Val.validateSmartGraphqlCsvGeneratorInput input
+    @?= Left "The first orderBy field must match graphqlPaginationKey"
 
 testVerifyBearerTokenInvalidSig :: IO ()
 testVerifyBearerTokenInvalidSig = do

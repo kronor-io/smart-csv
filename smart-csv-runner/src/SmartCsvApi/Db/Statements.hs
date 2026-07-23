@@ -1,19 +1,18 @@
 module SmartCsvApi.Db.Statements
   ( insertSmartGraphqlCsvGenerator,
-    selectQueryMaxRangeDaysByRoot,
     setTransactionContext,
   )
 where
 
 import Data.Aeson qualified as Aeson
 import Hasql.Statement (Statement)
-import Hasql.TH (maybeStatement, resultlessStatement, singletonStatement)
+import Hasql.TH (resultlessStatement, singletonStatement)
 import RIO
 
 -- | Insert a smart GraphQL CSV generator request into the database.
--- Parameters: (shardId, recipient, paginationKey, queryBody, queryVariables, tokenClaims, columnConfig, columnConfigName)
+-- Parameters: (shardId, recipient, paginationKey, orderBy, queryBody, queryVariables, tokenClaims, columnConfig, columnConfigName)
 -- Returns: the generated CSV ID
-insertSmartGraphqlCsvGenerator :: Statement (Int64, Text, Text, Text, Aeson.Value, Aeson.Value, Maybe Aeson.Value, Maybe Text) Int64
+insertSmartGraphqlCsvGenerator :: Statement (Int64, Text, Text, Maybe Aeson.Value, Text, Aeson.Value, Aeson.Value, Maybe Aeson.Value, Maybe Text) Int64
 insertSmartGraphqlCsvGenerator =
   [singletonStatement|
         with gcsv as
@@ -30,6 +29,7 @@ insertSmartGraphqlCsvGenerator =
             , recipient
             , id
             , pagination_key
+            , order_by
             , query
             , variables
             , token_claims
@@ -41,22 +41,15 @@ insertSmartGraphqlCsvGenerator =
           , $2::text
           , gcsv.id
           , $3::text
-          , $4::text
-          , $5::jsonb
+          , $4::jsonb?
+          , $5::text
           , $6::jsonb
-          , $7::jsonb?
-          , $8::text?
+          , $7::jsonb
+          , $8::jsonb?
+          , $9::text?
         from gcsv
         returning id::bigint
     |]
-
-selectQueryMaxRangeDaysByRoot :: Statement Text (Maybe Int32)
-selectQueryMaxRangeDaysByRoot =
-  [maybeStatement|
-        select max_range_days::int4
-        from smart_csv.query_range_limit
-        where root_name = $1::text
-      |]
 
 -- | Set the transaction-local request ID and trace context required by
 -- job_queue.enqueue_payload and other DB functions.

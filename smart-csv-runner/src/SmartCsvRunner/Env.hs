@@ -33,6 +33,8 @@ data Options = Options
     optionsPgPoolReplicaCSV :: RIO Env Pool.Pool,
     optionsGraphqlUrl :: Text,
     optionsGraphqlPageSize :: Int,
+    optionsCsvGenerationTimeoutSeconds :: Int,
+    optionsCsvGenerationMaxRows :: Int,
     optionsPortalUrl :: Text,
     optionsNumRetries :: Int,
     optionsMailHost :: Maybe Text,
@@ -76,6 +78,8 @@ instance HasParser Options where
       <*> replicaCsvPoolSizeP
       <*> graphqlUrlP
       <*> graphqlPageSizeP
+      <*> csvGenerationTimeoutSecondsP
+      <*> csvGenerationMaxRowsP
       <*> portalUrlP
       <*> numRetriesP
       <*> mailHostP
@@ -101,6 +105,8 @@ instance HasParser Options where
         replicaCsvPoolSize
         optionsGraphqlUrl
         optionsGraphqlPageSize
+        optionsCsvGenerationTimeoutSeconds
+        optionsCsvGenerationMaxRows
         optionsPortalUrl
         optionsNumRetries
         optionsMailHost
@@ -126,6 +132,8 @@ instance HasParser Options where
                   optionsPgPoolReplicaCSV = liftIO $ mkPool replicaCsvPoolSize replicaCsvSettings,
                   optionsGraphqlUrl,
                   optionsGraphqlPageSize,
+                  optionsCsvGenerationTimeoutSeconds,
+                  optionsCsvGenerationMaxRows,
                   optionsPortalUrl,
                   optionsNumRetries,
                   optionsMailHost,
@@ -245,6 +253,28 @@ instance HasParser Options where
             metavar "GRAPHQL_PAGE_SIZE",
             option,
             OptEnvConf.env "GRAPHQL_PAGE_SIZE"
+          ]
+
+      csvGenerationTimeoutSecondsP =
+        setting
+          [ help "CSV generation timeout in seconds",
+            long "csv-generation-timeout-seconds",
+            value 1800,
+            reader auto,
+            metavar "CSV_GENERATION_TIMEOUT_SECONDS",
+            option,
+            OptEnvConf.env "CSV_GENERATION_TIMEOUT_SECONDS"
+          ]
+
+      csvGenerationMaxRowsP =
+        setting
+          [ help "maximum number of rows to process for one CSV generation job",
+            long "csv-generation-max-rows",
+            value 1000000,
+            reader auto,
+            metavar "CSV_GENERATION_MAX_ROWS",
+            option,
+            OptEnvConf.env "CSV_GENERATION_MAX_ROWS"
           ]
 
       portalUrlP =

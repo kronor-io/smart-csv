@@ -5,7 +5,9 @@ module Kronor.SmartCsv.Pagination
     PaginationField (..),
     encodePaginationCursor,
     extractCursor,
+    extractCursorValue,
     inferHeaders,
+    parseOrderByFields,
     resolvePaginationFields,
     setPaginationValues,
   )
@@ -50,11 +52,21 @@ extractCursor :: ColumnConfig -> Selection RAW -> NonEmpty PaginationField -> Ma
 extractCursor colConfig rootSelection paginationFields row = do
   cursorEntries <-
     for (toList paginationFields) $ \PaginationField {paginationFieldName} -> do
-      columnId <- maybe (Left (CursorColumnMissing paginationFieldName)) Right (findColumnId paginationFieldName rootSelection)
+      columnId <- maybe (Left (CursorColumnMissing paginationFieldName)) Right (findColumnId (paginationFieldPath paginationFieldName) rootSelection)
       let cursorColumn = columnHeader columnId colConfig
       case row Map.!? cursorColumn of
         Nothing -> Left (CursorValueMissing cursorColumn)
         Just cursor -> Right (paginationFieldName, decodeUtf8Lenient cursor)
+  pure (PaginationCursor (Map.fromList cursorEntries))
+
+extractCursorValue :: Selection RAW -> NonEmpty PaginationField -> Aeson.Value -> Either CursorError PaginationCursor
+extractCursorValue rootSelection paginationFields rowValue = do
+  cursorEntries <-
+    for (toList paginationFields) $ \PaginationField {paginationFieldName} -> do
+      responsePath <- maybe (Left (CursorColumnMissing paginationFieldName)) Right (findResponsePath (paginationFieldPath paginationFieldName) rootSelection)
+      value <- maybe (Left (CursorValueMissing (Text.intercalate "." (toList responsePath)))) Right (lookupResponsePath responsePath rowValue)
+      cursor <- maybe (Left (CursorValueMissing (Text.intercalate "." (toList responsePath)))) Right (cursorValueText value)
+      Right (paginationFieldName, cursor)
   pure (PaginationCursor (Map.fromList cursorEntries))
 
 encodePaginationCursor :: PaginationCursor -> Text
@@ -72,38 +84,86 @@ resolvePaginationFields paginationKey queryVariables =
     parsedOrderByFields = case queryVariables of
       Aeson.Object obj ->
         case Aeson.KeyMap.lookup "orderBy" obj of
-          Just (Aeson.Array orderByValues) -> concatMap parseOrderByEntry (toList orderByValues)
+          Just orderBy -> parseOrderByFields orderBy
           _ -> []
       _ -> []
 
+parseOrderByFields :: Aeson.Value -> [PaginationField]
+parseOrderByFields (Aeson.Array orderByValues) = concatMap parseOrderByEntry (toList orderByValues)
+  where
     parseOrderByEntry :: Aeson.Value -> [PaginationField]
-    parseOrderByEntry (Aeson.Object orderObj) = mapMaybe parseOrderByComponent (Aeson.KeyMap.toList orderObj)
+    parseOrderByEntry (Aeson.Object orderObj) = concatMap (parseOrderByComponent []) (Aeson.KeyMap.toList orderObj)
     parseOrderByEntry _ = []
 
-    parseOrderByComponent :: (Aeson.Key, Aeson.Value) -> Maybe PaginationField
-    parseOrderByComponent (fieldName, Aeson.String directionText) =
-      PaginationField (Aeson.Key.toText fieldName) <$> parseDirection directionText
-    parseOrderByComponent _ = Nothing
+    parseOrderByComponent :: [Text] -> (Aeson.Key, Aeson.Value) -> [PaginationField]
+    parseOrderByComponent path (fieldName, Aeson.String directionText) =
+      maybeToList $ PaginationField (Text.intercalate "." (path <> [Aeson.Key.toText fieldName])) <$> parseDirection directionText
+    parseOrderByComponent path (fieldName, Aeson.Object nestedOrderObj) =
+      concatMap (parseOrderByComponent (path <> [Aeson.Key.toText fieldName])) (Aeson.KeyMap.toList nestedOrderObj)
+    parseOrderByComponent _ _ = []
 
     parseDirection = \case
       directionText | Text.toUpper directionText == "ASC" -> Just PaginationAsc
       directionText | Text.toUpper directionText == "DESC" -> Just PaginationDesc
       _ -> Nothing
+parseOrderByFields _ = []
 
-findColumnId :: Text -> Selection RAW -> Maybe Text
+paginationFieldPath :: Text -> NonEmpty Text
+paginationFieldPath fieldName =
+  case filter (not . Text.null) (Text.split (== '.') fieldName) of
+    [] -> fieldName :| []
+    pathPart : rest -> pathPart :| rest
+
+findColumnId :: NonEmpty Text -> Selection RAW -> Maybe Text
 findColumnId _ InlineFragment {} = Nothing
 findColumnId _ Spread {} = Nothing
-findColumnId targetField sel@(Selection {}) =
+findColumnId targetPath sel@(Selection {}) =
   case sel.selectionContent of
     SelectionSet sss ->
       asum
         [ case child of
             Selection {}
-              | unpackName child.selectionName == targetField -> Just (selectionOutputName child)
+              | unpackName child.selectionName == NonEmpty.head targetPath ->
+                  case NonEmpty.nonEmpty (NonEmpty.tail targetPath) of
+                    Nothing -> Just (selectionOutputName child)
+                    Just remainingPath -> selectionOutputName child <$ findColumnId remainingPath child
             _ -> Nothing
           | child <- toList sss
         ]
     _ -> Nothing
+
+findResponsePath :: NonEmpty Text -> Selection RAW -> Maybe (NonEmpty Text)
+findResponsePath _ InlineFragment {} = Nothing
+findResponsePath _ Spread {} = Nothing
+findResponsePath targetPath sel@(Selection {}) =
+  case sel.selectionContent of
+    SelectionSet sss ->
+      asum
+        [ case child of
+            Selection {}
+              | unpackName child.selectionName == NonEmpty.head targetPath ->
+                  case NonEmpty.nonEmpty (NonEmpty.tail targetPath) of
+                    Nothing -> Just (selectionOutputName child :| [])
+                    Just remainingPath -> (selectionOutputName child NonEmpty.<|) <$> findResponsePath remainingPath child
+            _ -> Nothing
+          | child <- toList sss
+        ]
+    _ -> Nothing
+
+lookupResponsePath :: NonEmpty Text -> Aeson.Value -> Maybe Aeson.Value
+lookupResponsePath (fieldName :| []) (Aeson.Object obj) = Aeson.KeyMap.lookup (Aeson.Key.fromText fieldName) obj
+lookupResponsePath (fieldName :| nextField : rest) (Aeson.Object obj) = do
+  nestedValue <- Aeson.KeyMap.lookup (Aeson.Key.fromText fieldName) obj
+  lookupResponsePath (nextField :| rest) nestedValue
+lookupResponsePath _ _ = Nothing
+
+cursorValueText :: Aeson.Value -> Maybe Text
+cursorValueText (Aeson.String text) = Just text
+cursorValueText (Aeson.Number number) = Just (tshow number)
+cursorValueText (Aeson.Bool boolValue) = Just (if boolValue then "true" else "false")
+cursorValueText Aeson.Null = Nothing
+cursorValueText (Aeson.Array _) = Nothing
+cursorValueText (Aeson.Object _) = Nothing
 
 setPaginationValues :: NonEmpty PaginationField -> Int -> Maybe PaginationCursor -> Aeson.Value -> Aeson.Value
 setPaginationValues paginationFields limit mPaginationValue (Aeson.Object obj) =
@@ -129,18 +189,25 @@ paginationCondition (paginationField :| remainingFields) cursor =
         [ "_or" Aeson..=
             [ comparisonExpression paginationField cursorValue,
               Aeson.object
-                [ Aeson.Key.fromText paginationField.paginationFieldName Aeson..= Aeson.object ["_eq" Aeson..= cursorValue],
-                  "_and" Aeson..= [paginationCondition (NonEmpty.fromList remainingFields) cursor]
+                [ "_and" Aeson..=
+                    [ equalityExpression paginationField cursorValue,
+                      paginationCondition (NonEmpty.fromList remainingFields) cursor
+                    ]
                 ]
             ]
         ]
 
 comparisonExpression :: PaginationField -> Text -> Aeson.Value
 comparisonExpression paginationField cursorValue =
-  Aeson.object
-    [ Aeson.Key.fromText paginationField.paginationFieldName Aeson..=
-        Aeson.object [comparisonOperator paginationField.paginationFieldDirection Aeson..= cursorValue]
-    ]
+  nestedComparison (paginationFieldPath paginationField.paginationFieldName) (Aeson.object [comparisonOperator paginationField.paginationFieldDirection Aeson..= cursorValue])
+
+equalityExpression :: PaginationField -> Text -> Aeson.Value
+equalityExpression paginationField cursorValue =
+  nestedComparison (paginationFieldPath paginationField.paginationFieldName) (Aeson.object ["_eq" Aeson..= cursorValue])
+
+nestedComparison :: NonEmpty Text -> Aeson.Value -> Aeson.Value
+nestedComparison (fieldName :| []) leaf = Aeson.object [Aeson.Key.fromText fieldName Aeson..= leaf]
+nestedComparison (fieldName :| nextField : rest) leaf = Aeson.object [Aeson.Key.fromText fieldName Aeson..= nestedComparison (nextField :| rest) leaf]
 
 comparisonOperator :: PaginationDirection -> Aeson.Key
 comparisonOperator = \case

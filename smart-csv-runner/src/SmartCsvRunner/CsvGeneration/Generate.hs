@@ -19,7 +19,7 @@ import SmartCsvRunner.AWS.S3 qualified as Utilities
 import SmartCsvRunner.AWS.Types
 import SmartCsvRunner.Job (Job, giveupS, jobEnv)
 import SmartCsvRunner.Job qualified as Job
-import SmartCsvRunner.MultipartUpload (EncodedCsvPage, ProcessingError (..), ReportGenerationRow (..), multiPartUploadFromPagination)
+import SmartCsvRunner.MultipartUpload (EncodedCsvPage (..), ProcessingError (..), ReportGenerationRow (..), multiPartUploadFromPagination)
 import SmartCsvRunner.ReportLink (ReportLinkStatus (..), statusToText)
 
 logSource :: LogSource
@@ -27,6 +27,10 @@ logSource = "smart-csv-runner:SmartCsvRunner.CsvGeneration.Generate"
 
 tableName :: Text
 tableName = "smart_csv.generated_csv"
+
+data CsvGenerationRowLimitExceeded = CsvGenerationRowLimitExceeded Int Int
+  deriving stock (Show)
+  deriving anyclass (Exception)
 
 generateCsv ::
   forall env cursor.
@@ -37,9 +41,10 @@ generateCsv ::
   Vector Csv.Name ->
   (cursor -> Text) ->
   Text ->
+  Int ->
   Payload ->
   Job env (Maybe Text)
-generateCsv fetchPage transactionsTest transactionsHeader toText fileKey payload@Payload {shardId, reportId, startDate, endDate, stateMachineId} = do
+generateCsv fetchPage transactionsTest transactionsHeader toText fileKey maxRows payload@Payload {shardId, reportId, startDate, endDate, stateMachineId} = do
   Db.writeOr (retryS <=< clarifyError tableName) do
     Kronor.Db.statement
       (toInt64 payload.shardId, stateMachineId, Aeson.toJSON payload)
@@ -76,14 +81,26 @@ generateCsv fetchPage transactionsTest transactionsHeader toText fileKey payload
                 count = 0
               }
 
-      eAwsS3MultiUpload <-
-        multiPartUploadFromPagination
-          reportGenerationRow
-          fetchPage
-          transactionsHeader
-          fetchPartEntities
-          updateProgress
-          onSuccess
+      rowCountRef <- liftIO $ newIORef 0
+
+      eAwsS3MultiUploadOrLimit <-
+        tryAny
+          $ multiPartUploadFromPagination
+            reportGenerationRow
+            (limitedFetchPage rowCountRef)
+            transactionsHeader
+            fetchPartEntities
+            updateProgress
+            onSuccess
+
+      eAwsS3MultiUpload <- case eAwsS3MultiUploadOrLimit of
+        Left err
+          | Just (CsvGenerationRowLimitExceeded configuredMaxRows processedRows) <- fromException err -> do
+              let msg = rowLimitExceededMessage configuredMaxRows processedRows
+              onError' msg
+              Job.giveupS logSource (display msg)
+        Left err -> throwM err
+        Right result -> pure result
 
       case eAwsS3MultiUpload of
         Left EmptySet -> do
@@ -116,6 +133,22 @@ generateCsv fetchPage transactionsTest transactionsHeader toText fileKey payload
       pure Nothing
   where
     onError' = onError payload
+
+    limitedFetchPage rowCountRef mCursor = do
+      mPage <- fetchPage mCursor
+      for_ mPage \page -> do
+        processedRows <- liftIO $ atomicModifyIORef' rowCountRef \currentRows ->
+          let updatedRows = currentRows + page.rowCount
+           in (updatedRows, updatedRows)
+        when (processedRows > maxRows) do
+          throwM (CsvGenerationRowLimitExceeded maxRows processedRows)
+      pure mPage
+
+    rowLimitExceededMessage configuredMaxRows processedRows =
+      "CSV generation exceeded row limit: processed "
+        <> tshow processedRows
+        <> " rows, maximum is "
+        <> tshow configuredMaxRows
 
     onSuccess :: ReportGenerationRow cursor -> Job env Text
     onSuccess rgr = do
