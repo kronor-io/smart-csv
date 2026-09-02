@@ -19,6 +19,7 @@ import Data.Aeson.KeyMap qualified as Aeson.KeyMap
 import Data.Csv qualified as Csv
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
+import Data.Scientific (FPFormat (Fixed), floatingOrInteger, formatScientific)
 import Data.Morpheus.Types.Internal.AST (RAW, Selection (..), SelectionContent (..), unpackName)
 import Kronor.SmartCsv.ColumnConfig (ColumnConfig, columnHeader)
 import Kronor.SmartCsv.Flatten (gatherSelectionNames, selectionOutputName)
@@ -159,7 +160,15 @@ lookupResponsePath _ _ = Nothing
 
 cursorValueText :: Aeson.Value -> Maybe Text
 cursorValueText (Aeson.String text) = Just text
-cursorValueText (Aeson.Number number) = Just (tshow number)
+-- The cursor goes back to Postgres as the text of a comparison, so an integral value
+-- has to render without a decimal point: 'tshow' on a Scientific yields "2160.0",
+-- which an integer column rejects with "invalid input syntax for type integer".
+-- Hasura sends integer keys as JSON numbers and bigint keys as strings, so only
+-- narrow-id tables ever hit this.
+cursorValueText (Aeson.Number number) =
+  Just $ case floatingOrInteger number :: Either Double Integer of
+    Right integral -> tshow integral
+    Left _ -> Text.pack (formatScientific Fixed Nothing number)
 cursorValueText (Aeson.Bool boolValue) = Just (if boolValue then "true" else "false")
 cursorValueText Aeson.Null = Nothing
 cursorValueText (Aeson.Array _) = Nothing

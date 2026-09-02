@@ -240,6 +240,9 @@ generateCsv fetchPage transactionsTest transactionsHeader toText fileKey maxRows
                             and id = $2::bigint
                     |]
 
+-- | Record a generation failure on the report row so it surfaces to the user.
+-- The first error wins: callers report the specific cause they know about, and the
+-- catch-all in the job handler must not overwrite it with a vaguer message.
 onError :: Payload -> Text -> Job env ()
 onError payload errMessage = do
   Db.writeOr (retryS <=< clarifyError "fsm.notify_state_machine:csv_report.error") do
@@ -252,6 +255,7 @@ onError payload errMessage = do
                 set status = 'ERROR',
                     err_message = $2::text
                 where id = $1::bigint
+                  and status <> 'ERROR'
             |]
 
     Kronor.Db.statement

@@ -34,6 +34,8 @@ tests =
       testCase "extractCursor resolves configured pagination column aliases" testExtractCursorWithAlias,
       testCase "extractCursor captures composite order cursor values" testExtractCursorCompositeOrder,
       testCase "extractCursorValue captures nested cursor values from raw rows" testExtractCursorValueNested,
+      testCase "extractCursorValue renders an integral number without a decimal point" testExtractCursorValueIntegral,
+      testCase "extractCursorValue keeps the fraction of a non-integral number" testExtractCursorValueFractional,
       testCase "extractCursor falls back to field name when no alias exists" testExtractCursorFallback,
       testCase "resolvePaginationKey uses default createdAt" testResolvePaginationKeyDefault,
       testCase "resolvePaginationFields uses orderBy when it matches pagination key" testResolvePaginationFieldsUsesOrderBy,
@@ -156,6 +158,23 @@ testExtractCursorValueNested = do
           ]
   extractCursorValue root (PaginationField "customer.createdAt" PaginationDesc :| []) row
     @?= Right (PaginationCursor (Map.fromList [("customer.createdAt", "2026-03-16T13:10:02Z")]))
+
+-- Hasura sends an integer key as a JSON number, and the cursor value goes back to it
+-- as the text of a comparison: "2160.0" fails with "invalid input syntax for type
+-- integer" and the whole export dies.
+testExtractCursorValueIntegral :: IO ()
+testExtractCursorValueIntegral = do
+  root <- parseRootSelection integralCursorQueryText
+  let row = Aeson.object [("id", Aeson.Number 2160)]
+  extractCursorValue root (PaginationField "id" PaginationDesc :| []) row
+    @?= Right (PaginationCursor (Map.fromList [("id", "2160")]))
+
+testExtractCursorValueFractional :: IO ()
+testExtractCursorValueFractional = do
+  root <- parseRootSelection integralCursorQueryText
+  let row = Aeson.object [("id", Aeson.Number 1.5)]
+  extractCursorValue root (PaginationField "id" PaginationDesc :| []) row
+    @?= Right (PaginationCursor (Map.fromList [("id", "1.5")]))
 
 testExtractCursorFallback :: IO ()
 testExtractCursorFallback = do
@@ -608,6 +627,10 @@ missingCursorQueryText =
 compositeCursorQueryText :: Text
 compositeCursorQueryText =
   "query { CashSettlement { transactionNo date createdAt } }"
+
+integralCursorQueryText :: Text
+integralCursorQueryText =
+  "query { transfers { id } }"
 
 nestedCursorQueryText :: Text
 nestedCursorQueryText =
