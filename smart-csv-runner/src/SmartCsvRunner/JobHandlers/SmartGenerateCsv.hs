@@ -5,6 +5,7 @@
 module SmartCsvRunner.JobHandlers.SmartGenerateCsv (SmartGraphqlCsvGenerate) where
 
 import Control.Exception qualified
+import Control.Exception.Annotated (AnnotatedException (..))
 import Control.Lens
 import Data.Aeson qualified as Aeson
 import Data.Coerce (coerce)
@@ -89,62 +90,63 @@ generateCSV payload = do
           (coerce payload.shardId, payload.csvId)
           SmartCsvStatements.selectGeneratorConfig
       )
-  -- Resolve column config: inline > named preset > pass-through
-  resolvedColumnConfig <- case mInlineConfig of
-    Just inlineJson -> pure (SmartCsvColumnConfig.parseColumnConfig inlineJson)
-    Nothing -> case mConfigName of
-      Just configName -> do
-        mNamedConfig <-
-          Db.readOr
-            (retry . displayShow)
-            (Db.statement configName SmartCsvStatements.selectColumnConfigByName)
-        pure $ maybe mempty SmartCsvColumnConfig.parseColumnConfig mNamedConfig
-      Nothing -> pure mempty
-  case parseRequest (GQLRequest {query = gq.query, operationName = Nothing, variables = Nothing}) of
-    Success executableDocument warnings -> do
-      logWarn (displayBytesUtf8 (toStrictBytes (Aeson.encode warnings)))
-      options <- asks $ snd . jobEnv
-      inferredRootField <-
-        maybe
-          (Job.giveupS logSource "SelectionSet is empty, could not infer root query")
-          pure
-          (headMaybe (toList executableDocument.operation.operationSelection))
-      let inferredRoot = unpackName inferredRootField.selectionName
-          fileName = [iii|#{inferredRoot}.csv|]
-          s3Path = [iii|smartPaymentCsv/#{shardId payload}/#{csvId payload}/|] :: Text
-          fileKey = s3Path <> fileName
-          inferredHeadersFromGql = SmartCsv.inferHeaders resolvedColumnConfig inferredRootField
-          emptyMap = Map.fromList ((,mempty) <$> inferredHeadersFromGql)
-      authToken <- genTokenFromClaims tokenClaims
-      httpManager <- liftIO $ Http.newManager Http.Tls.tlsManagerSettings
-      let paginationFields = SmartCsvQuery.resolvePaginationFields gq
-          generateAction =
-            subJobEnv fst
-              $ Generate.generateCsv
-                (gqlQuery httpManager resolvedColumnConfig pId inferredRootField paginationFields authToken gq inferredRoot emptyMap (Vector.fromList (encodeUtf8 <$> inferredHeadersFromGql)) options.optionsGraphqlPageSize options.optionsGraphqlUrl)
-                (pure True)
-                (Vector.fromList (encodeUtf8 <$> inferredHeadersFromGql))
-                SmartCsv.encodePaginationCursor
-                fileKey
-                options.optionsCsvGenerationMaxRows
-                generatedCsvPayload
-          timeoutSeconds = options.optionsCsvGenerationTimeoutSeconds
-      jobEnvForTimeout <- ask
-      mSignedLinkOrTimeout <-
-        if timeoutSeconds <= 0
-          then Just <$> liftIO (runRIO jobEnvForTimeout generateAction)
-          else do
-            let timeoutMicros = timeoutSeconds * 1_000_000
-            liftIO $ System.Timeout.timeout timeoutMicros (runRIO jobEnvForTimeout generateAction)
-      mSignedLink <- case mSignedLinkOrTimeout of
-        Nothing -> do
-          let msg = csvGenerationTimeoutMessage options.optionsCsvGenerationTimeoutSeconds
-          subJobEnv fst $ Generate.onError generatedCsvPayload msg
-          Job.giveupS logSource (display msg)
-        Just result -> pure result
-      sendCsvDoneEmail recipient mSignedLink
-    Failure errs -> do
-      Job.giveupS logSource (displayBytesUtf8 (toStrictBytes (Aeson.encode errs)))
+  recordNonRetryableFailure generatedCsvPayload do
+    -- Resolve column config: inline > named preset > pass-through
+    resolvedColumnConfig <- case mInlineConfig of
+      Just inlineJson -> pure (SmartCsvColumnConfig.parseColumnConfig inlineJson)
+      Nothing -> case mConfigName of
+        Just configName -> do
+          mNamedConfig <-
+            Db.readOr
+              (retry . displayShow)
+              (Db.statement configName SmartCsvStatements.selectColumnConfigByName)
+          pure $ maybe mempty SmartCsvColumnConfig.parseColumnConfig mNamedConfig
+        Nothing -> pure mempty
+    case parseRequest (GQLRequest {query = gq.query, operationName = Nothing, variables = Nothing}) of
+      Success executableDocument warnings -> do
+        logWarn (displayBytesUtf8 (toStrictBytes (Aeson.encode warnings)))
+        options <- asks $ snd . jobEnv
+        inferredRootField <-
+          maybe
+            (Job.giveupS logSource "SelectionSet is empty, could not infer root query")
+            pure
+            (headMaybe (toList executableDocument.operation.operationSelection))
+        let inferredRoot = unpackName inferredRootField.selectionName
+            fileName = [iii|#{inferredRoot}.csv|]
+            s3Path = [iii|smartPaymentCsv/#{shardId payload}/#{csvId payload}/|] :: Text
+            fileKey = s3Path <> fileName
+            inferredHeadersFromGql = SmartCsv.inferHeaders resolvedColumnConfig inferredRootField
+            emptyMap = Map.fromList ((,mempty) <$> inferredHeadersFromGql)
+        authToken <- genTokenFromClaims tokenClaims
+        httpManager <- liftIO $ Http.newManager Http.Tls.tlsManagerSettings
+        let paginationFields = SmartCsvQuery.resolvePaginationFields gq
+            generateAction =
+              subJobEnv fst
+                $ Generate.generateCsv
+                  (gqlQuery httpManager resolvedColumnConfig pId inferredRootField paginationFields authToken gq inferredRoot emptyMap (Vector.fromList (encodeUtf8 <$> inferredHeadersFromGql)) options.optionsGraphqlPageSize options.optionsGraphqlUrl)
+                  (pure True)
+                  (Vector.fromList (encodeUtf8 <$> inferredHeadersFromGql))
+                  SmartCsv.encodePaginationCursor
+                  fileKey
+                  options.optionsCsvGenerationMaxRows
+                  generatedCsvPayload
+            timeoutSeconds = options.optionsCsvGenerationTimeoutSeconds
+        jobEnvForTimeout <- ask
+        mSignedLinkOrTimeout <-
+          if timeoutSeconds <= 0
+            then Just <$> liftIO (runRIO jobEnvForTimeout generateAction)
+            else do
+              let timeoutMicros = timeoutSeconds * 1_000_000
+              liftIO $ System.Timeout.timeout timeoutMicros (runRIO jobEnvForTimeout generateAction)
+        mSignedLink <- case mSignedLinkOrTimeout of
+          Nothing -> do
+            let msg = csvGenerationTimeoutMessage options.optionsCsvGenerationTimeoutSeconds
+            subJobEnv fst $ Generate.onError generatedCsvPayload msg
+            Job.giveupS logSource (display msg)
+          Just result -> pure result
+        sendCsvDoneEmail recipient mSignedLink
+      Failure errs -> do
+        Job.giveupS logSource (displayBytesUtf8 (toStrictBytes (Aeson.encode errs)))
   where
     csvGenerationTimeoutMessage timeoutSeconds =
       "CSV generation exceeded timeout: maximum is "
@@ -215,6 +217,27 @@ generateCSV payload = do
           case SmartCsvErrorHandling.classifyJsonDecodeError err of
             SmartCsvErrorHandling.Retry msg -> retry (display msg)
             SmartCsvErrorHandling.Giveup msg -> Job.giveupS logSource (display msg)
+
+-- | A giveup only logs and marks the *job* failed; the report row keeps whatever
+-- status it had, so a user watching the CSV jobs page sees INITIALIZED with no
+-- message however the generation actually failed. Record non-retryable failures on
+-- the report before they propagate. Retryable ones are left alone — the job will
+-- run again and the report is still pending.
+recordNonRetryableFailure ::
+  Gscv.Payload ->
+  Job (S3Config, Options) a ->
+  Job (S3Config, Options) a
+recordNonRetryableFailure generatedCsvPayload action =
+  -- Job failures travel wrapped by annotated-exception, the same shape the dequeuer
+  -- matches on; rethrow the value untouched so its annotations survive.
+  action `catch` \annotated@(AnnotatedException _ userException) -> do
+    case userException of
+      Job.NonRetryableException _ cause ->
+        subJobEnv fst $ Generate.onError generatedCsvPayload (Text.pack (displayException cause))
+      -- Every retryable variant: the job runs again, so the report stays pending.
+      _ -> pure ()
+    throwIO (annotated :: AnnotatedException Job.UserException)
+
 
 sendCsvDoneEmail :: Text -> Maybe Text -> Job a ()
 sendCsvDoneEmail recipient mUrl = do
