@@ -4,6 +4,7 @@ module Kronor.SmartCsv.ColumnConfig
     columnDataPath,
     columnDecimalPlaces,
     columnHeader,
+    columnIsNumeric,
     parseColumnConfig,
   )
 where
@@ -21,7 +22,11 @@ type ColumnConfig = Map Text ColumnSettings
 data ColumnSettings = ColumnSettings
   { decimalPlaces :: Maybe Int,
     header :: Maybe Text,
-    dataPath :: Maybe Text
+    dataPath :: Maybe Text,
+    -- | The column prints a numeric scalar.  Not read from the request: it comes
+    -- from the GraphQL schema (see 'Kronor.SmartCsv.Schema'), because Hasura can
+    -- send numbers as strings.
+    numeric :: Bool
   }
   deriving stock (Eq, Show)
 
@@ -41,6 +46,7 @@ parseColumnConfig (Aeson.Object obj) =
           <$> settings Aeson..:? "decimalPlaces"
           <*> settings Aeson..:? "header"
           <*> settings Aeson..:? "dataPath"
+          <*> pure False
 parseColumnConfig _ = Map.empty
 
 columnHeader :: Text -> ColumnConfig -> Text
@@ -52,6 +58,10 @@ columnDecimalPlaces :: Text -> ColumnConfig -> Maybe Int
 columnDecimalPlaces columnId colConfig = do
   settings <- Map.lookup columnId colConfig
   settings.decimalPlaces
+
+columnIsNumeric :: Text -> ColumnConfig -> Bool
+columnIsNumeric columnId colConfig =
+  maybe False (.numeric) (Map.lookup columnId colConfig)
 
 columnDataPath :: Text -> ColumnConfig -> [Text]
 columnDataPath columnId colConfig =

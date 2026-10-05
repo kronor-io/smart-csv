@@ -10,9 +10,9 @@ import Hasql.TH (resultlessStatement, singletonStatement)
 import RIO
 
 -- | Insert a smart GraphQL CSV generator request into the database.
--- Parameters: (shardId, recipient, paginationKey, orderBy, queryBody, queryVariables, tokenClaims, columnConfig, columnConfigName)
+-- Parameters: (shardId, recipient, paginationKey, orderBy, queryBody, queryVariables, tokenClaims, columnConfig, columnConfigName, detectNumericColumns)
 -- Returns: the generated CSV ID
-insertSmartGraphqlCsvGenerator :: Statement (Int64, Text, Text, Maybe Aeson.Value, Text, Aeson.Value, Aeson.Value, Maybe Aeson.Value, Maybe Text) Int64
+insertSmartGraphqlCsvGenerator :: Statement (Int64, Text, Text, Maybe Aeson.Value, Text, Aeson.Value, Aeson.Value, Maybe Aeson.Value, Maybe Text, Bool) Int64
 insertSmartGraphqlCsvGenerator =
   [singletonStatement|
         with gcsv as
@@ -35,6 +35,7 @@ insertSmartGraphqlCsvGenerator =
             , token_claims
             , column_config
             , column_config_name
+            , detect_numeric_columns
             )
         select
             $1::bigint
@@ -47,6 +48,7 @@ insertSmartGraphqlCsvGenerator =
           , $7::jsonb
           , $8::jsonb?
           , $9::text?
+          , $10::bool
         from gcsv
         returning id::bigint
     |]

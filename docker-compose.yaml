@@ -40,7 +40,7 @@ services:
       retries: 10
 
   minio:
-    image: minio/minio
+    image: pgsty/minio
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: smartcsvak
@@ -52,7 +52,7 @@ services:
       - miniodata:/data
 
   minio-init:
-    image: minio/mc
+    image: pgsty/mc
     depends_on:
       minio:
         condition: service_started

@@ -74,6 +74,7 @@ library
     Kronor.SmartCsv.Notification
     Kronor.SmartCsv.Pagination
     Kronor.SmartCsv.Query
+    Kronor.SmartCsv.Schema
     Kronor.SmartCsv.Statements
     Kronor.SmartCsv.TokenClaims
     Kronor.SmartCsv.Validation

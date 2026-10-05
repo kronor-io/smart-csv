@@ -68,7 +68,8 @@ handleValidated apiEnv tokenClaims input = do
               Val.graphqlQueryVariables validated,
               tokenClaims,
               Val.columnConfig validated,
-              Val.columnConfigName validated
+              Val.columnConfigName validated,
+              Val.detectNumericColumns validated
             )
             Statements.insertSmartGraphqlCsvGenerator
 

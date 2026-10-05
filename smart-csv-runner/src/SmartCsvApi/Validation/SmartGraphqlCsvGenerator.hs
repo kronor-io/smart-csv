@@ -23,7 +23,8 @@ data SmartGraphqlCsvGenerator = SmartGraphqlCsvGenerator
     graphqlQueryBody :: Text,
     graphqlQueryVariables :: Value,
     columnConfig :: Maybe Value,
-    columnConfigName :: Maybe Text
+    columnConfigName :: Maybe Text,
+    detectNumericColumns :: Bool
   }
   deriving stock (Eq, Show)
 
@@ -73,5 +74,6 @@ validateSmartGraphqlCsvGeneratorInput input = do
         graphqlQueryBody = input.graphqlQueryBody,
         graphqlQueryVariables = queryVariables,
         columnConfig = input.columnConfig,
-        columnConfigName = input.columnConfigName
+        columnConfigName = input.columnConfigName,
+        detectNumericColumns = fromMaybe False input.detectNumericColumns
       }
