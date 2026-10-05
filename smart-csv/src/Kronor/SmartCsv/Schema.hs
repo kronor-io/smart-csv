@@ -41,7 +41,7 @@ introspectionRequestBody =
   Aeson.encode
     $ Aeson.object
       [ "query"
-          Aeson..= ( "{ __schema { queryType { name } types { name fields { name type { name ofType { name ofType { name ofType { name } } } } } } } }" ::
+          Aeson..= ( "{ __schema { queryType { name } types { name fields(includeDeprecated: true) { name type { name ofType { name ofType { name ofType { name } } } } } } } } }" ::
                        Text
                    )
       ]
