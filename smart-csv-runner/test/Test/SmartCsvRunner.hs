@@ -43,6 +43,8 @@ tests =
           testCase "input json decoding accepts payload with inline columnConfig" testInputJsonDecodeWithColumnConfig,
           testCase "input json decoding accepts payload with columnConfigName" testInputJsonDecodeWithColumnConfigName,
           testCase "validation rejects both columnConfig and columnConfigName" testValidationRejectsBothColumnConfigs,
+          testCase "validation turns numeric column detection off when it is not requested" testValidationDetectNumericColumnsDefault,
+          testCase "validation keeps requested numeric column detection" testValidationDetectNumericColumnsRequested,
           testCase "validation rejects orderBy that does not start with pagination key" testValidationRejectsOrderByMismatch,
           testCase "verifyBearerToken rejects invalid signature" testVerifyBearerTokenInvalidSig,
           testCase "verifyBearerToken accepts valid token" testVerifyBearerTokenValid,
@@ -65,7 +67,8 @@ mkInput =
       graphqlQueryVariables =
         "{\"conditions\":{\"createdAt\":{\"_gte\":\"2026-03-01T00:00:00Z\",\"_lt\":\"2026-03-15T00:00:00Z\"}}}",
       columnConfig = Nothing,
-      columnConfigName = Nothing
+      columnConfigName = Nothing,
+      detectNumericColumns = Nothing
     }
 
 testJwtSecret :: Text
@@ -281,3 +284,15 @@ signTestJwt secret payload = do
   case result of
     Left err -> error (show err)
     Right compact -> pure (decodeUtf8Lenient (LBS.toStrict compact))
+
+testValidationDetectNumericColumnsDefault :: IO ()
+testValidationDetectNumericColumnsDefault =
+  fmap (.detectNumericColumns) (Val.validateSmartGraphqlCsvGeneratorInput mkInput) @?= Right False
+
+testValidationDetectNumericColumnsRequested :: IO ()
+testValidationDetectNumericColumnsRequested = do
+  let payload = Aeson.encode mkInput {detectNumericColumns = Just True}
+  case Aeson.eitherDecode payload of
+    Left err -> assertFailure err
+    Right input ->
+      fmap (.detectNumericColumns) (Val.validateSmartGraphqlCsvGeneratorInput input) @?= Right True

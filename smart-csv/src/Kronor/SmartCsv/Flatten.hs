@@ -17,7 +17,7 @@ import Data.Morpheus.Types.Internal.AST (RAW, Selection (..), SelectionContent (
 import Data.Scientific (FPFormat (Fixed), Scientific, formatScientific, scientific)
 import Data.Text qualified as Text
 import Data.Vector qualified
-import Kronor.SmartCsv.ColumnConfig (ColumnConfig, columnDataPath, columnDecimalPlaces, columnHeader)
+import Kronor.SmartCsv.ColumnConfig (ColumnConfig, columnDataPath, columnDecimalPlaces, columnHeader, columnIsNumeric)
 import RIO
 
 -- | Convert one GraphQL response row into a flat CSV field map.
@@ -59,7 +59,11 @@ csvify colConfig _ (Aeson.Object (Aeson.KeyMap.toMapText -> obj)) =
           case readMaybe (Text.unpack t) :: Maybe Scientific of
             Just sc -> Just (formatNumeric columnId sc)
             Nothing -> Just (Csv.toField t)
-        Nothing -> Just (Csv.toField t)
+        -- A number Hasura sent as a string keeps its own digits (the scale of the
+        -- database column), only the decimal point changes.
+        Nothing
+          | columnIsNumeric columnId colConfig -> Just (Csv.toField (withCommaDecimalSeparator (Text.unpack t)))
+          | otherwise -> Just (Csv.toField t)
     renderLeaf columnId (Aeson.Number sc) = Just (formatNumeric columnId sc)
     renderLeaf _ (Aeson.Bool b) = Just (if b then "True" else "False")
     renderLeaf _ Aeson.Null = Just mempty

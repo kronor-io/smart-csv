@@ -31,6 +31,7 @@ import Kronor.SmartCsv.Notification qualified as SmartCsvNotification
 import Kronor.SmartCsv.Pagination qualified as SmartCsv
 import Kronor.SmartCsv.Query (DecodedResponsePage (..), GenericQuery (..))
 import Kronor.SmartCsv.Query qualified as SmartCsvQuery
+import Kronor.SmartCsv.Schema qualified as SmartCsvSchema
 import Kronor.SmartCsv.Statements qualified as SmartCsvStatements
 import Kronor.SmartCsv.TokenClaims qualified as SmartCsvTokenClaims
 import Network.HTTP.Client qualified as Http
@@ -83,7 +84,7 @@ generateCSV payload = do
                 endDate = gcsv.endDate
               }
       )
-  (gq, tokenClaims, recipient, mInlineConfig, mConfigName) <-
+  (gq, tokenClaims, recipient, mInlineConfig, mConfigName, detectNumericColumns) <-
     Db.readOr
       (retry . displayShow)
       ( Db.statement
@@ -119,11 +120,15 @@ generateCSV payload = do
             emptyMap = Map.fromList ((,mempty) <$> inferredHeadersFromGql)
         authToken <- genTokenFromClaims tokenClaims
         httpManager <- liftIO $ Http.newManager Http.Tls.tlsManagerSettings
+        columnConfig <-
+          if detectNumericColumns
+            then markNumericColumnsFromSchema httpManager options.optionsGraphqlUrl authToken resolvedColumnConfig inferredRootField
+            else pure resolvedColumnConfig
         let paginationFields = SmartCsvQuery.resolvePaginationFields gq
             generateAction =
               subJobEnv fst
                 $ Generate.generateCsv
-                  (gqlQuery httpManager resolvedColumnConfig pId inferredRootField paginationFields authToken gq inferredRoot emptyMap (Vector.fromList (encodeUtf8 <$> inferredHeadersFromGql)) options.optionsGraphqlPageSize options.optionsGraphqlUrl)
+                  (gqlQuery httpManager columnConfig pId inferredRootField paginationFields authToken gq inferredRoot emptyMap (Vector.fromList (encodeUtf8 <$> inferredHeadersFromGql)) options.optionsGraphqlPageSize options.optionsGraphqlUrl)
                   (pure True)
                   (Vector.fromList (encodeUtf8 <$> inferredHeadersFromGql))
                   SmartCsv.encodePaginationCursor
@@ -238,6 +243,35 @@ recordNonRetryableFailure generatedCsvPayload action =
       _ -> pure ()
     throwIO (annotated :: AnnotatedException Job.UserException)
 
+
+-- | Flag the columns that print a numeric scalar, so a number Hasura sends as a
+-- string still gets a decimal comma.  The schema is read with the export's own
+-- token, so it is the schema of the role that runs the query.  When it cannot be
+-- read the export goes on without it, and numbers sent as strings keep their
+-- decimal point.
+markNumericColumnsFromSchema :: Http.Manager -> Text -> ByteString -> ColumnConfig -> Selection RAW -> Job env ColumnConfig
+markNumericColumnsFromSchema httpManager graphqlUrl authToken colConfig rootSelection = do
+  requestIdValue <- asks requestId
+  eSchema <- tryAny do
+    request0 <- liftIO (Http.parseRequest (Text.unpack graphqlUrl))
+    let request =
+          request0
+            { Http.method = "POST",
+              Http.requestBody = Http.RequestBodyLBS SmartCsvSchema.introspectionRequestBody,
+              Http.requestHeaders =
+                [ ("Authorization", "Bearer " <> authToken),
+                  ("Content-Type", "application/json"),
+                  ("X-Request-Id", encodeUtf8 (coerce @RequestId @Text requestIdValue))
+                ]
+            }
+    response <- liftIO (Http.httpLbs request httpManager)
+    pure (Aeson.eitherDecode (Http.responseBody response) >>= SmartCsvSchema.parseIntrospectionResponse)
+  case either (Left . displayException) id eSchema of
+    Left err -> do
+      logWarn ("Could not read the GraphQL schema, numbers sent as strings keep their decimal point: " <> fromString err)
+      pure colConfig
+    Right schema ->
+      pure (SmartCsvSchema.markNumericColumns (SmartCsvSchema.numericColumns schema colConfig rootSelection) colConfig)
 
 sendCsvDoneEmail :: Text -> Maybe Text -> Job a ()
 sendCsvDoneEmail recipient mUrl = do

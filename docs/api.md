@@ -29,6 +29,7 @@ Submits a GraphQL query for CSV generation. The service processes the query asyn
 | `graphqlQueryVariables` | string | yes | JSON-encoded query variables |
 | `columnConfig` | object | no | Inline column mapping (see [Column Presets](column-presets.md)) |
 | `columnConfigName` | string | no | Name of a stored column preset (see [Column Presets](column-presets.md)) |
+| `detectNumericColumns` | boolean | no | Read the GraphQL schema to find the columns that print `numeric`/`float` values and write them with a decimal comma even when Hasura sends them as strings (`HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES`). Needs schema introspection for the caller's role; when it is unavailable the export runs without it. Default `false`. |
 
 `columnConfig` and `columnConfigName` are mutually exclusive — specifying both is a validation error.
 
@@ -154,7 +155,8 @@ The CSV columns become:
 | wt_123 | user@example.com | VISA, MASTERCARD |
 
 Type conversions:
-- Strings and numbers are used as-is
+- Numbers are written with a decimal comma (`12,5`); whole numbers have no decimals
+- Strings are used as-is, except in a column with `decimalPlaces` or one `detectNumericColumns` found to be numeric: there a number sent as a string also gets a decimal comma
 - Booleans become `"True"` or `"False"`
 - Nulls become empty fields
 - Arrays serialize every item and join the rendered values with `, `

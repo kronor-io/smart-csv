@@ -15,3 +15,4 @@ column_config 2026-03-20T12:00:00Z Kronor Team <dev@kronor.io> # Column config p
 query_range_limit 2026-05-19T12:00:00Z Kronor Team <dev@kronor.io> # Per-root query range limit overrides
 order_by 2026-07-03T12:00:00Z Kronor Team <dev@kronor.io> # Store per-request GraphQL orderBy for cursor pagination
 drop_query_range_limit [query_range_limit] 2026-07-08T12:00:00Z Kronor Team <dev@kronor.io> # Drop per-root query range limit; superseded by row/time limits
+detect_numeric_columns [smart_csv_tables] 2026-10-05T12:00:00Z Alexander Gerasimov <alge.ex@boozt.com> # Opt-in numeric column detection from the GraphQL schema
