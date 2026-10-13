@@ -1,6 +1,7 @@
 module Test.Kronor.SmartCsv (main) where
 
 import Data.Aeson qualified as Aeson
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Char8 qualified as ByteString.Char8
 import Data.Map.Strict qualified as Map
 import Data.Morpheus.Core (parseRequest)
@@ -13,7 +14,7 @@ import Kronor.SmartCsv.ErrorHandling (ErrorAction (..), classifyCursorError, cla
 import Kronor.SmartCsv.Flatten (csvify, gatherSelectionNames)
 import Kronor.SmartCsv.Notification (CompletionEmail (..), EnqueueMeta (..), defaultEnqueueMeta, mkCompletionEmail)
 import Kronor.SmartCsv.Pagination (CursorError (..), PaginationCursor (..), PaginationDirection (..), PaginationField (..), extractCursor, extractCursorValue, inferHeaders)
-import Kronor.SmartCsv.Schema (SchemaTypes (..), markNumericColumns, numericColumns, parseIntrospectionResponse)
+import Kronor.SmartCsv.Schema (SchemaTypes (..), introspectionRequestBody, markNumericColumns, numericColumns, parseIntrospectionResponse)
 import Kronor.SmartCsv.Query (DecodedResponsePage (..), GenericQuery (..), ResponseError (..), buildRequestBody, decodeResponseChunk, decodeResponsePage, decodeResponseRows, decodedResponsePageBytes, resolvePaginationFields, resolvePaginationKey)
 import Kronor.SmartCsv.TokenClaims (ParsedTokenClaims (..), TokenClaimsError (..), parseTokenClaims)
 import Kronor.SmartCsv.Validation qualified as SmartCsvValidation
@@ -83,6 +84,7 @@ tests =
       testCase "csvify applies custom decimal places with comma decimals" testCsvifyCustomDecimalPlaces,
       testCase "csvify uses comma decimals when decimalPlaces is unset" testCsvifyNumericPreservesOriginal,
       testCase "csvify uses comma decimals for a numeric column sent as a string" testCsvifyNumericStringColumn,
+      testCase "introspectionRequestBody is a valid GraphQL query" testIntrospectionRequestBodyParses,
       testCase "parseIntrospectionResponse keeps the named type of each field" testParseIntrospectionResponse,
       testCase "numericColumns finds the columns that print a numeric scalar" testNumericColumns,
       testCase "markNumericColumns flags configured and unconfigured columns" testMarkNumericColumns,
@@ -1022,6 +1024,18 @@ introspectionResponse =
 parsedSchema :: IO SchemaTypes
 parsedSchema =
   either (\err -> assertFailure err >> error "unreachable") pure (parseIntrospectionResponse introspectionResponse)
+
+-- | Hasura answers a query it cannot parse with only an @errors@ key, and the export
+-- then falls back to dot decimals, so a typo in the query shows up nowhere else.
+testIntrospectionRequestBodyParses :: IO ()
+testIntrospectionRequestBodyParses =
+  case Aeson.decode introspectionRequestBody of
+    Just (Aeson.Object body)
+      | Just (Aeson.String q) <- KeyMap.lookup "query" body ->
+          case parseRequest (GQLRequest {query = q, operationName = Nothing, variables = Nothing}) of
+            Failure errs -> assertFailure ("introspection query parse failed: " <> show errs)
+            Success _ _ -> pure ()
+    _ -> assertFailure "introspectionRequestBody has no query string"
 
 testParseIntrospectionResponse :: IO ()
 testParseIntrospectionResponse = do
