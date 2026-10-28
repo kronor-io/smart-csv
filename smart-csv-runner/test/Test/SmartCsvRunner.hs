@@ -39,7 +39,9 @@ tests =
           testCase "generate endpoint rejects malformed JSON" testGenerateEndpointMalformedJson,
           testCase "generate endpoint rejects missing auth header" testGenerateEndpointMissingAuth,
           testCase "export keeps the token claims when no hasuraRole is requested" testExportTokenClaimsWithoutRole,
+          testCase "export narrows the token claims to the requested hasuraRole" testExportTokenClaimsAllowedRole,
           testCase "export rejects a hasuraRole the token is not allowed" testExportTokenClaimsDisallowedRole,
+          testCase "export rejects an empty hasuraRole" testExportTokenClaimsEmptyRole,
           testCase "input json decoding accepts valid payload" testInputJsonDecodeValid,
           testCase "input json decoding accepts top-level orderBy" testInputJsonDecodeWithOrderBy,
           testCase "input json decoding fails when required field is missing" testInputJsonDecodeMissingField,
@@ -220,13 +222,30 @@ exportClaims =
     [ "https://hasura.io/jwt/claims"
         Aeson..= Aeson.object
           [ "x-hasura-default-role" Aeson..= ("accountant_query" :: Text),
-            "x-hasura-allowed-roles" Aeson..= (["accountant_query"] :: [Text])
+            "x-hasura-allowed-roles" Aeson..= (["accountant_query", "base_query"] :: [Text])
           ]
     ]
 
 testExportTokenClaimsWithoutRole :: IO ()
 testExportTokenClaimsWithoutRole =
   exportTokenClaims Nothing exportClaims @?= Right exportClaims
+
+testExportTokenClaimsAllowedRole :: IO ()
+testExportTokenClaimsAllowedRole =
+  exportTokenClaims (Just "base_query") exportClaims
+    @?= Right
+      ( Aeson.object
+          [ "https://hasura.io/jwt/claims"
+              Aeson..= Aeson.object
+                [ "x-hasura-default-role" Aeson..= ("base_query" :: Text),
+                  "x-hasura-allowed-roles" Aeson..= (["base_query"] :: [Text])
+                ]
+          ]
+      )
+
+testExportTokenClaimsEmptyRole :: IO ()
+testExportTokenClaimsEmptyRole =
+  exportTokenClaims (Just "") exportClaims @?= Left "hasuraRole must not be empty"
 
 testExportTokenClaimsDisallowedRole :: IO ()
 testExportTokenClaimsDisallowedRole =

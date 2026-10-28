@@ -54,9 +54,11 @@ tests =
       testCase "decodeResponseRows returns missing root error when root is absent" testDecodeResponseRowsMissingRoot,
       testCase "parseTokenClaims extracts expected optional fields" testParseTokenClaims,
       testCase "parseTokenClaims rejects non-object claims payload" testParseTokenClaimsInvalid,
-      testCase "selectHasuraRole makes an allowed role the default role" testSelectHasuraRole,
+      testCase "selectHasuraRole narrows the claims to an allowed role" testSelectHasuraRole,
+      testCase "selectHasuraRole matches role claim names ignoring case" testSelectHasuraRoleClaimCase,
       testCase "selectHasuraRole rejects a role the token is not allowed" testSelectHasuraRoleNotAllowed,
       testCase "selectHasuraRole rejects claims without Hasura claims" testSelectHasuraRoleMissingClaims,
+      testCase "selectHasuraRole rejects Hasura claims that are not an object" testSelectHasuraRoleClaimsNotObject,
       testCase "mkCompletionEmail with url uses download template" testCompletionEmailWithUrl,
       testCase "mkCompletionEmail without url uses no-data template" testCompletionEmailNoData,
       testCase "defaultEnqueueMeta preserves SendEmail constants" testDefaultEnqueueMeta,
@@ -556,12 +558,24 @@ testSelectHasuraRole =
             ( "https://hasura.io/jwt/claims",
               Aeson.object
                 [ ("x-hasura-default-role", Aeson.String "po_manager_query"),
-                  ("x-hasura-allowed-roles", Aeson.toJSON ["accountant_query", "po_manager_query" :: Text]),
+                  ("x-hasura-allowed-roles", Aeson.toJSON ["po_manager_query" :: Text]),
                   ("x-hasura-user-id", Aeson.String "7")
                 ]
             )
           ]
       )
+
+testSelectHasuraRoleClaimCase :: IO ()
+testSelectHasuraRoleClaimCase =
+  selectHasuraRole "po_manager_query" (hasuraClaimsWith [("X-Hasura-Default-Role", Aeson.String "accountant_query"), ("X-Hasura-Allowed-Roles", Aeson.toJSON ["accountant_query", "po_manager_query" :: Text])])
+    @?= Right (hasuraClaimsWith [("x-hasura-default-role", Aeson.String "po_manager_query"), ("x-hasura-allowed-roles", Aeson.toJSON ["po_manager_query" :: Text])])
+  where
+    hasuraClaimsWith fields = Aeson.object [("https://hasura.io/jwt/claims", Aeson.object fields)]
+
+testSelectHasuraRoleClaimsNotObject :: IO ()
+testSelectHasuraRoleClaimsNotObject =
+  selectHasuraRole "po_manager_query" (Aeson.object [("https://hasura.io/jwt/claims", Aeson.String "{\"x-hasura-allowed-roles\":[\"po_manager_query\"]}")])
+    @?= Left HasuraClaimsNotObject
 
 testSelectHasuraRoleNotAllowed :: IO ()
 testSelectHasuraRoleNotAllowed =

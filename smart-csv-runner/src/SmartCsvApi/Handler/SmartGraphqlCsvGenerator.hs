@@ -41,14 +41,19 @@ handleSmartGraphqlCsvGenerator apiEnv mAuthHeader input = do
           Left err -> pure $ Left ("Authorization failed: " <> err)
           Right exportClaims -> handleValidated apiEnv exportClaims input
 
--- | The claims the export runs with: the token's own, with the requested Hasura role
--- (if any) made the default role.
+-- | The claims the export runs with: the token's own, narrowed to the requested Hasura
+-- role (if any).
 exportTokenClaims :: Maybe Text -> Aeson.Value -> Either String Aeson.Value
 exportTokenClaims Nothing tokenClaims = Right tokenClaims
+-- An empty role means the caller's request transform rendered nothing; falling back to
+-- the default role would run the export as a role nobody picked.
+exportTokenClaims (Just "") _ = Left "hasuraRole must not be empty"
 exportTokenClaims (Just role) tokenClaims = first describe (selectHasuraRole role tokenClaims)
   where
-    describe HasuraClaimsMissing = "token has no Hasura claims to select hasuraRole " <> show role <> " from"
-    describe HasuraRoleNotAllowed = "hasuraRole " <> show role <> " is not one of the token's allowed roles"
+    quotedRole = "\"" <> Text.unpack role <> "\""
+    describe HasuraClaimsMissing = "token has no Hasura claims to select hasuraRole " <> quotedRole <> " from"
+    describe HasuraClaimsNotObject = "token's Hasura claims are not a JSON object, so hasuraRole " <> quotedRole <> " cannot be selected"
+    describe HasuraRoleNotAllowed = "hasuraRole " <> quotedRole <> " is not one of the token's allowed roles"
 
 handleValidated ::
   ApiEnv ->

@@ -7,7 +7,9 @@ module Kronor.SmartCsv.TokenClaims (
 ) where
 
 import Data.Aeson qualified as Aeson
+import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
+import Data.Text qualified as Text
 import RIO
 
 
@@ -40,27 +42,51 @@ parseTokenClaims _ = Left TokenClaimsNotObject
 
 data HasuraRoleError
     = HasuraClaimsMissing
+    | HasuraClaimsNotObject
     | HasuraRoleNotAllowed
     deriving stock (Eq, Show)
 
 
--- | Make the role the default role of the token's Hasura claims, so that the token
--- signed from them for the export runs its queries as that role.  The role must be
--- one of the token's allowed roles.
+-- | Make the role the default and only allowed role of the token's Hasura claims,
+-- so that the token signed from them for the export runs its queries as that role
+-- and cannot pick another.  The role must be one of the token's allowed roles.
+-- Hasura reads claim names case-insensitively, so they are matched that way and
+-- written back in lower case.
 selectHasuraRole :: Text -> Aeson.Value -> Either HasuraRoleError Aeson.Value
 selectHasuraRole role (Aeson.Object claims) =
     case KeyMap.lookup hasuraClaimsKey claims of
+        Nothing -> Left HasuraClaimsMissing
         Just (Aeson.Object hasuraClaims)
             | role `elem` allowedRoles hasuraClaims ->
-                let selected = KeyMap.insert "x-hasura-default-role" (Aeson.String role) hasuraClaims
+                let selected =
+                        KeyMap.insert defaultRoleKey (Aeson.String role)
+                            . KeyMap.insert allowedRolesKey (Aeson.toJSON [role])
+                            $ KeyMap.filterWithKey (\key _ -> not (isRoleClaim key)) hasuraClaims
                  in Right (Aeson.Object (KeyMap.insert hasuraClaimsKey (Aeson.Object selected) claims))
             | otherwise -> Left HasuraRoleNotAllowed
-        _ -> Left HasuraClaimsMissing
+        Just _ -> Left HasuraClaimsNotObject
   where
-    allowedRoles hasuraClaims = case KeyMap.lookup "x-hasura-allowed-roles" hasuraClaims of
-        Just (Aeson.Array roles) -> mapMaybe getText (toList roles)
-        _ -> []
+    allowedRoles hasuraClaims =
+        [ allowed
+        | (key, Aeson.Array roles) <- KeyMap.toList hasuraClaims
+        , isClaim allowedRolesKey key
+        , allowed <- mapMaybe getText (toList roles)
+        ]
+    isRoleClaim key = isClaim defaultRoleKey key || isClaim allowedRolesKey key
 selectHasuraRole _ _ = Left HasuraClaimsMissing
+
+
+-- | Whether a key names the claim, ignoring case as Hasura does.
+isClaim :: KeyMap.Key -> KeyMap.Key -> Bool
+isClaim claim key = Text.toLower (Key.toText key) == Key.toText claim
+
+
+defaultRoleKey :: KeyMap.Key
+defaultRoleKey = "x-hasura-default-role"
+
+
+allowedRolesKey :: KeyMap.Key
+allowedRolesKey = "x-hasura-allowed-roles"
 
 
 hasuraClaimsKey :: KeyMap.Key
