@@ -30,8 +30,15 @@ Submits a GraphQL query for CSV generation. The service processes the query asyn
 | `columnConfig` | object | no | Inline column mapping (see [Column Presets](column-presets.md)) |
 | `columnConfigName` | string | no | Name of a stored column preset (see [Column Presets](column-presets.md)) |
 | `detectNumericColumns` | boolean | no | Read the GraphQL schema to find the columns that print `numeric`/`float` values and write them with a decimal comma even when Hasura sends them as strings (`HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES`). Needs schema introspection for the caller's role; when it is unavailable the export runs without it. Default `false`. |
+| `hasuraRole` | string | no | Hasura role to run the export queries as. Must be one of the token's `x-hasura-allowed-roles`; the request is rejected otherwise. Default: the token's `x-hasura-default-role`. |
 
 `columnConfig` and `columnConfigName` are mutually exclusive — specifying both is a validation error.
+
+The service reads only the `Authorization` header, so a Hasura action has to pass the role it resolved for the mutation in the body. With a request transform:
+
+```
+"hasuraRole": {{$body.session_variables["x-hasura-role"]}}
+```
 
 ### Example Request
 

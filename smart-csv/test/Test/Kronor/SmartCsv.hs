@@ -16,7 +16,7 @@ import Kronor.SmartCsv.Notification (CompletionEmail (..), EnqueueMeta (..), def
 import Kronor.SmartCsv.Pagination (CursorError (..), PaginationCursor (..), PaginationDirection (..), PaginationField (..), extractCursor, extractCursorValue, inferHeaders)
 import Kronor.SmartCsv.Schema (SchemaTypes (..), introspectionRequestBody, markNumericColumns, numericColumns, parseIntrospectionResponse)
 import Kronor.SmartCsv.Query (DecodedResponsePage (..), GenericQuery (..), ResponseError (..), buildRequestBody, decodeResponseChunk, decodeResponsePage, decodeResponseRows, decodedResponsePageBytes, resolvePaginationFields, resolvePaginationKey)
-import Kronor.SmartCsv.TokenClaims (ParsedTokenClaims (..), TokenClaimsError (..), parseTokenClaims)
+import Kronor.SmartCsv.TokenClaims (HasuraRoleError (..), ParsedTokenClaims (..), TokenClaimsError (..), parseTokenClaims, selectHasuraRole)
 import Kronor.SmartCsv.Validation qualified as SmartCsvValidation
 import RIO
 import RIO.ByteString.Lazy qualified as LByteString
@@ -54,6 +54,9 @@ tests =
       testCase "decodeResponseRows returns missing root error when root is absent" testDecodeResponseRowsMissingRoot,
       testCase "parseTokenClaims extracts expected optional fields" testParseTokenClaims,
       testCase "parseTokenClaims rejects non-object claims payload" testParseTokenClaimsInvalid,
+      testCase "selectHasuraRole makes an allowed role the default role" testSelectHasuraRole,
+      testCase "selectHasuraRole rejects a role the token is not allowed" testSelectHasuraRoleNotAllowed,
+      testCase "selectHasuraRole rejects claims without Hasura claims" testSelectHasuraRoleMissingClaims,
       testCase "mkCompletionEmail with url uses download template" testCompletionEmailWithUrl,
       testCase "mkCompletionEmail without url uses no-data template" testCompletionEmailNoData,
       testCase "defaultEnqueueMeta preserves SendEmail constants" testDefaultEnqueueMeta,
@@ -530,6 +533,44 @@ testParseTokenClaims = do
 testParseTokenClaimsInvalid :: IO ()
 testParseTokenClaimsInvalid =
   parseTokenClaims Aeson.Null @?= Left TokenClaimsNotObject
+
+hasuraRoleClaims :: Aeson.Value
+hasuraRoleClaims =
+  Aeson.object
+    [ ("associated_email", Aeson.String "ops@kronor.io"),
+      ( "https://hasura.io/jwt/claims",
+        Aeson.object
+          [ ("x-hasura-default-role", Aeson.String "accountant_query"),
+            ("x-hasura-allowed-roles", Aeson.toJSON ["accountant_query", "po_manager_query" :: Text]),
+            ("x-hasura-user-id", Aeson.String "7")
+          ]
+      )
+    ]
+
+testSelectHasuraRole :: IO ()
+testSelectHasuraRole =
+  selectHasuraRole "po_manager_query" hasuraRoleClaims
+    @?= Right
+      ( Aeson.object
+          [ ("associated_email", Aeson.String "ops@kronor.io"),
+            ( "https://hasura.io/jwt/claims",
+              Aeson.object
+                [ ("x-hasura-default-role", Aeson.String "po_manager_query"),
+                  ("x-hasura-allowed-roles", Aeson.toJSON ["accountant_query", "po_manager_query" :: Text]),
+                  ("x-hasura-user-id", Aeson.String "7")
+                ]
+            )
+          ]
+      )
+
+testSelectHasuraRoleNotAllowed :: IO ()
+testSelectHasuraRoleNotAllowed =
+  selectHasuraRole "admin" hasuraRoleClaims @?= Left HasuraRoleNotAllowed
+
+testSelectHasuraRoleMissingClaims :: IO ()
+testSelectHasuraRoleMissingClaims =
+  selectHasuraRole "po_manager_query" (Aeson.object [("associated_email", Aeson.String "ops@kronor.io")])
+    @?= Left HasuraClaimsMissing
 
 testCompletionEmailWithUrl :: IO ()
 testCompletionEmailWithUrl =
