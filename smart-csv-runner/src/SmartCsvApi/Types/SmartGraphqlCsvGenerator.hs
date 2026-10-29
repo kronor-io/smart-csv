@@ -21,7 +21,10 @@ data SmartGraphqlCsvGeneratorInput = SmartGraphqlCsvGeneratorInput
     -- | Read the GraphQL schema to find the columns that print numbers, so that a
     -- number sent as a string (Hasura's stringified numeric types) still gets a
     -- decimal comma.  Off when absent.
-    detectNumericColumns :: Maybe Bool
+    detectNumericColumns :: Maybe Bool,
+    -- | Hasura role to run the export queries as; one of the token's allowed roles.
+    -- The token's default role when absent.
+    hasuraRole :: Maybe Text
   }
   deriving stock (Eq, Show, Generic)
   deriving (FromJSON, ToJSON)

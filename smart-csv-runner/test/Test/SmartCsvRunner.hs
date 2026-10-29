@@ -16,6 +16,7 @@ import Network.Wai.Test qualified as WaiTest
 import RIO
 import SmartCsvApi.Auth (signJwtFromClaims, verifyBearerToken)
 import SmartCsvApi.Env (ApiEnv (..))
+import SmartCsvApi.Handler.SmartGraphqlCsvGenerator (exportTokenClaims)
 import SmartCsvApi.RestServer qualified as RestServer
 import SmartCsvApi.Types.SmartGraphqlCsvGenerator (SmartGraphqlCsvGeneratorInput (..), SmartGraphqlCsvGeneratorResult (..))
 import SmartCsvApi.Validation.SmartGraphqlCsvGenerator qualified as Val
@@ -37,11 +38,16 @@ tests =
           testCase "generate endpoint returns validation failure envelope for invalid payload" testGenerateEndpointValidationError,
           testCase "generate endpoint rejects malformed JSON" testGenerateEndpointMalformedJson,
           testCase "generate endpoint rejects missing auth header" testGenerateEndpointMissingAuth,
+          testCase "export keeps the token claims when no hasuraRole is requested" testExportTokenClaimsWithoutRole,
+          testCase "export narrows the token claims to the requested hasuraRole" testExportTokenClaimsAllowedRole,
+          testCase "export rejects a hasuraRole the token is not allowed" testExportTokenClaimsDisallowedRole,
+          testCase "export rejects an empty hasuraRole" testExportTokenClaimsEmptyRole,
           testCase "input json decoding accepts valid payload" testInputJsonDecodeValid,
           testCase "input json decoding accepts top-level orderBy" testInputJsonDecodeWithOrderBy,
           testCase "input json decoding fails when required field is missing" testInputJsonDecodeMissingField,
           testCase "input json decoding accepts payload with inline columnConfig" testInputJsonDecodeWithColumnConfig,
           testCase "input json decoding accepts payload with columnConfigName" testInputJsonDecodeWithColumnConfigName,
+          testCase "input json decoding accepts payload with hasuraRole" testInputJsonDecodeWithHasuraRole,
           testCase "validation rejects both columnConfig and columnConfigName" testValidationRejectsBothColumnConfigs,
           testCase "validation turns numeric column detection off when it is not requested" testValidationDetectNumericColumnsDefault,
           testCase "validation keeps requested numeric column detection" testValidationDetectNumericColumnsRequested,
@@ -68,7 +74,8 @@ mkInput =
         "{\"conditions\":{\"createdAt\":{\"_gte\":\"2026-03-01T00:00:00Z\",\"_lt\":\"2026-03-15T00:00:00Z\"}}}",
       columnConfig = Nothing,
       columnConfigName = Nothing,
-      detectNumericColumns = Nothing
+      detectNumericColumns = Nothing,
+      hasuraRole = Nothing
     }
 
 testJwtSecret :: Text
@@ -202,6 +209,48 @@ testInputJsonDecodeWithColumnConfigName = do
   let input = mkInput {columnConfigName = Just "payment_requests"}
       payload = Aeson.encode input
   Aeson.eitherDecode payload @?= Right input
+
+testInputJsonDecodeWithHasuraRole :: IO ()
+testInputJsonDecodeWithHasuraRole = do
+  let input = mkInput {hasuraRole = Just "po_manager_query"}
+      payload = Aeson.encode input
+  Aeson.eitherDecode payload @?= Right input
+
+exportClaims :: Aeson.Value
+exportClaims =
+  Aeson.object
+    [ "https://hasura.io/jwt/claims"
+        Aeson..= Aeson.object
+          [ "x-hasura-default-role" Aeson..= ("accountant_query" :: Text),
+            "x-hasura-allowed-roles" Aeson..= (["accountant_query", "base_query"] :: [Text])
+          ]
+    ]
+
+testExportTokenClaimsWithoutRole :: IO ()
+testExportTokenClaimsWithoutRole =
+  exportTokenClaims Nothing exportClaims @?= Right exportClaims
+
+testExportTokenClaimsAllowedRole :: IO ()
+testExportTokenClaimsAllowedRole =
+  exportTokenClaims (Just "base_query") exportClaims
+    @?= Right
+      ( Aeson.object
+          [ "https://hasura.io/jwt/claims"
+              Aeson..= Aeson.object
+                [ "x-hasura-default-role" Aeson..= ("base_query" :: Text),
+                  "x-hasura-allowed-roles" Aeson..= (["base_query"] :: [Text])
+                ]
+          ]
+      )
+
+testExportTokenClaimsEmptyRole :: IO ()
+testExportTokenClaimsEmptyRole =
+  exportTokenClaims (Just "") exportClaims @?= Left "hasuraRole must not be empty"
+
+testExportTokenClaimsDisallowedRole :: IO ()
+testExportTokenClaimsDisallowedRole =
+  exportTokenClaims (Just "po_manager_query") exportClaims
+    @?= Left "hasuraRole \"po_manager_query\" is not one of the token's allowed roles"
 
 testValidationRejectsBothColumnConfigs :: IO ()
 testValidationRejectsBothColumnConfigs = do

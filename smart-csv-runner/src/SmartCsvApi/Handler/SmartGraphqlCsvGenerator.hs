@@ -2,6 +2,7 @@
 
 module SmartCsvApi.Handler.SmartGraphqlCsvGenerator
   ( handleSmartGraphqlCsvGenerator,
+    exportTokenClaims,
   )
 where
 
@@ -14,6 +15,7 @@ import Hasql.Pool qualified
 import Hasql.Transaction.Sessions (IsolationLevel (..), Mode (..), transaction)
 import Kronor.Db (statement)
 import Kronor.Db.Models.Shard (shardToInt64)
+import Kronor.SmartCsv.TokenClaims (HasuraRoleError (..), selectHasuraRole)
 import RIO
 import SmartCsvApi.Auth (verifyBearerToken)
 import SmartCsvApi.Db.Statements qualified as Statements
@@ -35,7 +37,23 @@ handleSmartGraphqlCsvGenerator apiEnv mAuthHeader input = do
       authResult <- verifyBearerToken apiEnv.envJwtSecret authHeader
       case authResult of
         Left err -> pure $ Left ("Authentication failed: " <> Text.unpack err)
-        Right tokenClaims -> handleValidated apiEnv tokenClaims input
+        Right tokenClaims -> case exportTokenClaims input.hasuraRole tokenClaims of
+          Left err -> pure $ Left ("Authorization failed: " <> err)
+          Right exportClaims -> handleValidated apiEnv exportClaims input
+
+-- | The claims the export runs with: the token's own, narrowed to the requested Hasura
+-- role (if any).
+exportTokenClaims :: Maybe Text -> Aeson.Value -> Either String Aeson.Value
+exportTokenClaims Nothing tokenClaims = Right tokenClaims
+-- An empty role means the caller's request transform rendered nothing; falling back to
+-- the default role would run the export as a role nobody picked.
+exportTokenClaims (Just "") _ = Left "hasuraRole must not be empty"
+exportTokenClaims (Just role) tokenClaims = first describe (selectHasuraRole role tokenClaims)
+  where
+    quotedRole = "\"" <> Text.unpack role <> "\""
+    describe HasuraClaimsMissing = "token has no Hasura claims to select hasuraRole " <> quotedRole <> " from"
+    describe HasuraClaimsNotObject = "token's Hasura claims are not a JSON object, so hasuraRole " <> quotedRole <> " cannot be selected"
+    describe HasuraRoleNotAllowed = "hasuraRole " <> quotedRole <> " is not one of the token's allowed roles"
 
 handleValidated ::
   ApiEnv ->
