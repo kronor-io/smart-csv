@@ -8,8 +8,10 @@ import Control.Exception qualified
 import Control.Exception.Annotated (AnnotatedException (..))
 import Control.Lens
 import Data.Aeson qualified as Aeson
+import Data.ByteString.Builder qualified as Builder
+import Data.ByteString.Lazy qualified as LByteString
 import Data.Coerce (coerce)
-import Data.Csv qualified as Csv
+import Data.Csv.Builder qualified as Csv.Builder
 import Data.Map.Strict qualified as Map
 import Data.Morpheus.Core (parseRequest)
 import Data.Morpheus.Internal.Ext (Result (..))
@@ -27,13 +29,16 @@ import Kronor.Logger (RequestId (..), requestId)
 import Kronor.SmartCsv.ColumnConfig (ColumnConfig)
 import Kronor.SmartCsv.ColumnConfig qualified as SmartCsvColumnConfig
 import Kronor.SmartCsv.ErrorHandling qualified as SmartCsvErrorHandling
+import Kronor.SmartCsv.ExportFormat (ExportFormat (..))
+import Kronor.SmartCsv.ExportFormat qualified as ExportFormat
 import Kronor.SmartCsv.Notification qualified as SmartCsvNotification
 import Kronor.SmartCsv.Pagination qualified as SmartCsv
-import Kronor.SmartCsv.Query (DecodedResponsePage (..), GenericQuery (..))
+import Kronor.SmartCsv.Query (EncodedResponsePage (..), GenericQuery (..))
 import Kronor.SmartCsv.Query qualified as SmartCsvQuery
 import Kronor.SmartCsv.Schema qualified as SmartCsvSchema
 import Kronor.SmartCsv.Statements qualified as SmartCsvStatements
 import Kronor.SmartCsv.TokenClaims qualified as SmartCsvTokenClaims
+import Kronor.SmartCsv.Xlsx qualified as Xlsx
 import Network.HTTP.Client qualified as Http
 import Network.HTTP.Client.TLS qualified as Http.Tls
 import Network.HTTP.Types.Status qualified as Http.Status
@@ -60,10 +65,13 @@ instance JobProcessor SmartCsvEnv SmartGraphqlCsvGenerate where
   closeJob (SmartGraphqlCsvGenerate _) = subJobEnv smartCsvS3Config do
     Job.giveupS logSource "Payment CSV generation job was closed"
 
-type CsvRow = Map Text Csv.Field
-
 graphqlChunkTargetBytes :: Int64
 graphqlChunkTargetBytes = 5_242_880
+
+-- | zlib's default level.  Each page is compressed as it arrives, ahead of the
+-- uploads, so this is on the fetch path; it costs about 10 ms per 1000 rows.
+xlsxCompressionLevel :: Int
+xlsxCompressionLevel = 6
 
 generateCSV ::
   (HasCallStack) =>
@@ -84,7 +92,7 @@ generateCSV payload = do
                 endDate = gcsv.endDate
               }
       )
-  (gq, tokenClaims, recipient, mInlineConfig, mConfigName, detectNumericColumns) <-
+  (gq, tokenClaims, recipient, mInlineConfig, mConfigName, detectNumericColumns, fileFormatText) <-
     Db.readOr
       (retry . displayShow)
       ( Db.statement
@@ -92,6 +100,11 @@ generateCSV payload = do
           SmartCsvStatements.selectGeneratorConfig
       )
   recordNonRetryableFailure generatedCsvPayload do
+    exportFormat <-
+      maybe
+        (Job.giveupS logSource ("Unknown export format " <> display fileFormatText))
+        pure
+        (ExportFormat.parseExportFormat fileFormatText)
     -- Resolve column config: inline > named preset > pass-through
     resolvedColumnConfig <- case mInlineConfig of
       Just inlineJson -> pure (SmartCsvColumnConfig.parseColumnConfig inlineJson)
@@ -113,7 +126,7 @@ generateCSV payload = do
             pure
             (headMaybe (toList executableDocument.operation.operationSelection))
         let inferredRoot = unpackName inferredRootField.selectionName
-            fileName = [iii|#{inferredRoot}.csv|]
+            fileName = inferredRoot <> "." <> ExportFormat.exportFormatExtension exportFormat
             s3Path = [iii|smartPaymentCsv/#{shardId payload}/#{csvId payload}/|] :: Text
             fileKey = s3Path <> fileName
             inferredHeadersFromGql = SmartCsv.inferHeaders resolvedColumnConfig inferredRootField
@@ -125,15 +138,35 @@ generateCSV payload = do
             then markNumericColumnsFromSchema httpManager options.optionsGraphqlUrl authToken resolvedColumnConfig inferredRootField
             else pure resolvedColumnConfig
         let paginationFields = SmartCsvQuery.resolvePaginationFields gq
-            generateAction =
+            fetchRows encodeRow = gqlQuery httpManager pId inferredRootField paginationFields authToken gq inferredRoot encodeRow options.optionsGraphqlPageSize options.optionsGraphqlUrl
+        (fetchPage, filePrefix, maxRows) <- case exportFormat of
+          Csv -> do
+            let csvHeader = Vector.fromList (encodeUtf8 <$> inferredHeadersFromGql)
+            pure
+              ( fetchRows (SmartCsvQuery.csvRowBytes columnConfig inferredRoot emptyMap csvHeader),
+                Builder.toLazyByteString (Csv.Builder.encodeHeader csvHeader),
+                options.optionsCsvGenerationMaxRows
+              )
+          Xlsx -> do
+            let styles = Xlsx.mkXlsxStyles columnConfig
+                xlsxHeaders = Vector.fromList inferredHeadersFromGql
+            (archivePrefix, archive, sheetEntry) <- liftIO (Xlsx.startArchive xlsxCompressionLevel inferredRoot styles xlsxHeaders)
+            sheetEntryRef <- newIORef (Just sheetEntry)
+            pure
+              ( xlsxPages archive sheetEntryRef (fetchRows (Xlsx.xlsxRowBytes columnConfig styles xlsxHeaders)),
+                archivePrefix,
+                min options.optionsCsvGenerationMaxRows Xlsx.excelMaxDataRows
+              )
+        let generateAction =
               subJobEnv fst
                 $ Generate.generateCsv
-                  (gqlQuery httpManager columnConfig pId inferredRootField paginationFields authToken gq inferredRoot emptyMap (Vector.fromList (encodeUtf8 <$> inferredHeadersFromGql)) options.optionsGraphqlPageSize options.optionsGraphqlUrl)
+                  fetchPage
                   (pure True)
-                  (Vector.fromList (encodeUtf8 <$> inferredHeadersFromGql))
+                  filePrefix
                   SmartCsv.encodePaginationCursor
                   fileKey
-                  options.optionsCsvGenerationMaxRows
+                  (ExportFormat.exportFormatContentType exportFormat)
+                  maxRows
                   generatedCsvPayload
             timeoutSeconds = options.optionsCsvGenerationTimeoutSeconds
         jobEnvForTimeout <- ask
@@ -149,7 +182,7 @@ generateCSV payload = do
             subJobEnv fst $ Generate.onError generatedCsvPayload msg
             Job.giveupS logSource (display msg)
           Just result -> pure result
-        sendCsvDoneEmail recipient mSignedLink
+        sendCsvDoneEmail recipient (ExportFormat.exportFormatFileKind exportFormat) mSignedLink
       Failure errs -> do
         Job.giveupS logSource (displayBytesUtf8 (toStrictBytes (Aeson.encode errs)))
   where
@@ -167,10 +200,10 @@ generateCSV payload = do
             SmartCsvErrorHandling.Giveup msg ->
               Control.Exception.throw $ Job.NonRetryableException pId $ Job.StringyException logSource msg
         Right cursor -> cursor
-    gqlQuery :: Http.Manager -> ColumnConfig -> Job.PayloadId -> Selection RAW -> NonEmpty SmartCsv.PaginationField -> ByteString -> GenericQuery -> Text -> CsvRow -> Vector Csv.Name -> Int -> Text -> Maybe SmartCsv.PaginationCursor -> Job S3Config (Maybe (EncodedCsvPage SmartCsv.PaginationCursor))
-    gqlQuery httpManager colConfig pId rootSelection paginationFields authToken GenericQuery {..} root emptyCsvRow header batchSize graphqlUrl mCursor = do
+    gqlQuery :: Http.Manager -> Job.PayloadId -> Selection RAW -> NonEmpty SmartCsv.PaginationField -> ByteString -> GenericQuery -> Text -> (Aeson.Value -> LByteString) -> Int -> Text -> Maybe SmartCsv.PaginationCursor -> Job S3Config (Maybe (EncodedCsvPage SmartCsv.PaginationCursor))
+    gqlQuery httpManager pId rootSelection paginationFields authToken GenericQuery {..} root encodeRow batchSize graphqlUrl mCursor = do
       let reqBody = SmartCsvQuery.buildRequestBody paginationFields batchSize mCursor GenericQuery {..}
-      eRes <- streamResponsePage httpManager graphqlUrl authToken reqBody colConfig root emptyCsvRow header
+      eRes <- streamResponsePage httpManager graphqlUrl authToken reqBody root encodeRow
       case eRes of
         Right page ->
           pure $ case page.lastRawRow of
@@ -188,8 +221,8 @@ generateCSV payload = do
             SmartCsvErrorHandling.Retry msg -> retry (display msg)
             SmartCsvErrorHandling.Giveup msg -> Job.giveupS logSource (display msg)
 
-    streamResponsePage :: Http.Manager -> Text -> ByteString -> LByteString -> ColumnConfig -> Text -> CsvRow -> Vector Csv.Name -> Job S3Config (Either SmartCsvQuery.ResponseError DecodedResponsePage)
-    streamResponsePage httpManager graphqlUrl authToken reqBody colConfig root emptyCsvRow header = do
+    streamResponsePage :: Http.Manager -> Text -> ByteString -> LByteString -> Text -> (Aeson.Value -> LByteString) -> Job S3Config (Either SmartCsvQuery.ResponseError EncodedResponsePage)
+    streamResponsePage httpManager graphqlUrl authToken reqBody root encodeRow = do
       requestIdValue <- asks requestId
       request0 <-
         liftIO (Http.parseRequest (Text.unpack graphqlUrl))
@@ -211,7 +244,7 @@ generateCSV payload = do
             let status = Http.Status.statusCode response.responseStatus
             if status < 200 || status >= 300
               then pure (Left status)
-              else Right <$> SmartCsvQuery.decodeResponseChunkWith graphqlChunkTargetBytes colConfig root emptyCsvRow header (Http.responseBody response)
+              else Right <$> SmartCsvQuery.encodeResponseChunkWith graphqlChunkTargetBytes root encodeRow (Http.responseBody response)
       case parseResult of
         Left status ->
           case SmartCsvErrorHandling.classifyHttpStatusError status of
@@ -222,6 +255,49 @@ generateCSV payload = do
           case SmartCsvErrorHandling.classifyJsonDecodeError err of
             SmartCsvErrorHandling.Retry msg -> retry (display msg)
             SmartCsvErrorHandling.Giveup msg -> Job.giveupS logSource (display msg)
+
+-- | Compress each page into the sheet as it arrives, so a page's raw XML never
+-- waits for an upload, and once the rows run out hand back the end of the
+-- archive as one last page: being last, it may be smaller than an S3 part has to be.
+xlsxPages ::
+  Xlsx.XlsxArchive ->
+  IORef (Maybe Xlsx.SheetEntry) ->
+  (Maybe cursor -> Job env (Maybe (EncodedCsvPage cursor))) ->
+  Maybe cursor ->
+  Job env (Maybe (EncodedCsvPage cursor))
+xlsxPages archive sheetEntryRef fetchPage mCursor =
+  readIORef sheetEntryRef >>= \case
+    -- The archive was closed by the previous call.
+    Nothing -> pure Nothing
+    Just sheetEntry ->
+      fetchPage mCursor >>= \case
+        Just page -> do
+          (segment, sheetEntry') <- liftIO (Xlsx.appendRows archive sheetEntry page.encodedRows)
+          unless (Xlsx.archiveFits archive sheetEntry')
+            $ Job.giveupS logSource "Excel file exceeded 4 GB, the most an XLSX file without ZIP64 can hold"
+          writeIORef sheetEntryRef (Just sheetEntry')
+          pure
+            $ Just
+              EncodedCsvPage
+                { encodedRows = segment,
+                  encodedRowBytes = LByteString.length segment,
+                  lastCursor = page.lastCursor,
+                  rowCount = page.rowCount
+                }
+        Nothing -> case mCursor of
+          -- No rows at all: there is no file to close, the export is empty.
+          Nothing -> pure Nothing
+          Just cursor -> do
+            trailer <- liftIO (Xlsx.finishArchive archive sheetEntry)
+            writeIORef sheetEntryRef Nothing
+            pure
+              $ Just
+                EncodedCsvPage
+                  { encodedRows = trailer,
+                    encodedRowBytes = LByteString.length trailer,
+                    lastCursor = cursor,
+                    rowCount = 0
+                  }
 
 -- | A giveup only logs and marks the *job* failed; the report row keeps whatever
 -- status it had, so a user watching the CSV jobs page sees INITIALIZED with no
@@ -273,9 +349,9 @@ markNumericColumnsFromSchema httpManager graphqlUrl authToken colConfig rootSele
     Right schema ->
       pure (SmartCsvSchema.markNumericColumns (SmartCsvSchema.numericColumns schema colConfig rootSelection) colConfig)
 
-sendCsvDoneEmail :: Text -> Maybe Text -> Job a ()
-sendCsvDoneEmail recipient mUrl = do
-  let completionEmail = SmartCsvNotification.mkCompletionEmail mUrl
+sendCsvDoneEmail :: Text -> Text -> Maybe Text -> Job a ()
+sendCsvDoneEmail recipient fileKind mUrl = do
+  let completionEmail = SmartCsvNotification.mkCompletionEmail fileKind mUrl
       enqueueMeta = SmartCsvNotification.defaultEnqueueMeta
   Db.writeOr (retry . displayShow)
     $ Db.statement

@@ -120,7 +120,6 @@ library
     , annotated-exception
     , base                                  >=4.11     && <10
     , base64-bytestring
-    , binary
     , bytestring
     , cassava
     , co-log-json
@@ -204,6 +203,7 @@ test-suite smart-csv-runner-test
     , http-types
     , lens-aeson
     , rio
+    , smart-csv
     , smart-csv-runner
     , string-interpolate
     , tasty
