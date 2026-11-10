@@ -9,6 +9,7 @@ import Data.Aeson qualified as JSON
 import Data.Aeson.Key qualified as JSON
 import Kronor.Db.Models.Shard (ShardId (..))
 import Kronor.Db.Types.Bigint (Bigint (..))
+import Kronor.SmartCsv.ExportFormat (ExportFormat (..))
 import Kronor.SmartCsv.Pagination qualified as SmartCsvPagination
 import Kronor.SmartCsv.Validation qualified as SmartCsvValidation
 import RIO
@@ -24,7 +25,8 @@ data SmartGraphqlCsvGenerator = SmartGraphqlCsvGenerator
     graphqlQueryVariables :: Value,
     columnConfig :: Maybe Value,
     columnConfigName :: Maybe Text,
-    detectNumericColumns :: Bool
+    detectNumericColumns :: Bool,
+    format :: ExportFormat
   }
   deriving stock (Eq, Show)
 
@@ -75,5 +77,6 @@ validateSmartGraphqlCsvGeneratorInput input = do
         graphqlQueryVariables = queryVariables,
         columnConfig = input.columnConfig,
         columnConfigName = input.columnConfigName,
-        detectNumericColumns = fromMaybe False input.detectNumericColumns
+        detectNumericColumns = fromMaybe False input.detectNumericColumns,
+        format = fromMaybe Csv input.format
       }

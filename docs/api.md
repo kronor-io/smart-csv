@@ -30,6 +30,7 @@ Submits a GraphQL query for CSV generation. The service processes the query asyn
 | `columnConfig` | object | no | Inline column mapping (see [Column Presets](column-presets.md)) |
 | `columnConfigName` | string | no | Name of a stored column preset (see [Column Presets](column-presets.md)) |
 | `detectNumericColumns` | boolean | no | Read the GraphQL schema to find the columns that print `numeric`/`float` values and write them with a decimal comma even when Hasura sends them as strings (`HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES`). Needs schema introspection for the caller's role; when it is unavailable the export runs without it. Default `false`. |
+| `format` | string | no | `"csv"` (default) or `"xlsx"` for an Excel file. See [Excel output](#excel-output). |
 | `hasuraRole` | string | no | Hasura role to run the export queries as. Must be one of the token's `x-hasura-allowed-roles`; the request is rejected otherwise, and an empty role is rejected too. The token the export runs with has only this role, as its default and only allowed role. Default: the token's `x-hasura-default-role`. |
 
 `columnConfig` and `columnConfigName` are mutually exclusive — specifying both is a validation error.
@@ -172,3 +173,15 @@ Type conversions:
 - Without `dataPath`, arrays and objects are unwrapped recursively while there is only one possible path forward (all array elements, or an object with exactly one key)
 - If the traversal reaches an object with multiple keys and there is no `dataPath`, no value is emitted for that column
 - `decimalPlaces` truncates toward zero — `12.35` with `decimalPlaces: 1` becomes `12.3`
+
+### Excel output
+
+With `"format": "xlsx"` the export is an Excel file with one sheet, named after the query's root field. Columns, headers, `dataPath` and array joining are the same as for CSV; the cells keep their types:
+
+- Numbers are number cells, shown with the reader's own decimal separator. A column with `decimalPlaces` truncates the same way and shows that many decimals with a thousands separator (`#,##0.00`)
+- A number sent as a string becomes a number cell in a column with `decimalPlaces` or one `detectNumericColumns` found to be numeric; elsewhere strings stay text, so leading zeros survive
+- A number with more than 15 significant digits, which Excel would round, is written as text with its exact digits
+- Booleans are Excel booleans (`TRUE`/`FALSE`, in the reader's language)
+- Text longer than Excel's 32,767 characters is cut there; control characters are written as Excel's `_xHHHH_` escapes
+
+The file is written page by page: each page is compressed on its own and uploaded with the rest, so an Excel export holds no more in memory than a CSV one. An Excel export stops at 1,048,575 rows (a sheet's limit below its header) even when `CSV_GENERATION_MAX_ROWS` is higher, and at 4 GB of sheet data, the most a ZIP file without the ZIP64 extension holds.

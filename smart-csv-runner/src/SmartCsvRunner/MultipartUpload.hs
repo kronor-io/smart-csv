@@ -8,10 +8,7 @@ import Amazonka.S3 qualified as Aws.S3
 import Amazonka.S3.Lens qualified as Aws.S3
 import Control.Lens.Operators ((#))
 import Control.Monad.Except (ExceptT (..), runExceptT)
-import Data.Binary.Builder qualified
 import Data.ByteString.Lazy qualified
-import Data.Csv qualified as Csv
-import Data.Csv.Builder qualified
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.String.Interpolate (iii)
 import Kronor.Tracer qualified
@@ -50,6 +47,7 @@ data ReportGenerationRow cursor = ReportGenerationRow
     , bucketName :: Text
     , lastPaginationKey :: cursor
     , uploadId :: Maybe Text
+    , contentType :: Maybe Text
     , lastUploadedPart :: Maybe Int32
     , partEntity :: ByteString
     , startDate :: UTCTime
@@ -64,8 +62,8 @@ multiPartUploadFromPagination ::
     ReportGenerationRow (Maybe cursor) ->
     -- how to fetch transactions using the pagination cursor
     (Maybe cursor -> Job env (Maybe (EncodedCsvPage cursor))) ->
-    -- header line for the CSV
-    Vector Csv.Name ->
+    -- bytes that open the file, ahead of the first page (the CSV header line)
+    Data.ByteString.Lazy.ByteString ->
     -- fetch part entities
     (Job env (Vector ByteString)) ->
     -- update progress in the table to retry if failed
@@ -76,14 +74,14 @@ multiPartUploadFromPagination ::
 multiPartUploadFromPagination
     oldReportGenerationRow
     fetchPage
-    header
+    filePrefix
     fetchPartEntities
     updateProgress
     onSuccess =
         do
             eMultiUpload <- runExceptT do
                 (rgr, uploadId) <- ExceptT $ createUpload oldReportGenerationRow
-                (rgr', uploadId') <- ExceptT $ uploadParts rgr fetchPage header uploadId updateProgress
+                (rgr', uploadId') <- ExceptT $ uploadParts rgr fetchPage filePrefix uploadId updateProgress
                 ExceptT $ completeUpload fetchPartEntities onSuccess rgr' uploadId'
 
             case eMultiUpload of
@@ -97,8 +95,8 @@ uploadParts ::
     ReportGenerationRow (Maybe cursor) ->
     -- how to fetch transactions using the pagination cursor
     (Maybe cursor -> Job env (Maybe (EncodedCsvPage cursor))) ->
-    -- header line for the CSV
-    Vector Csv.Name ->
+    -- bytes that open the file, ahead of the first page
+    Data.ByteString.Lazy.ByteString ->
     -- Upload Id
     Text ->
     -- update progress in the table to retry if failed
@@ -107,7 +105,7 @@ uploadParts ::
 uploadParts
     rgr
     fetchPage
-    header
+    filePrefix
     uploadId
     updateProgress =
         do
@@ -168,9 +166,7 @@ uploadParts
                                         partNumber
                                         ( Aws.toBody
                                             ( if partNumber == 1
-                                                then
-                                                    Data.Binary.Builder.toLazyByteString (Data.Csv.Builder.encodeHeader header)
-                                                        <> chunkBuilder
+                                                then filePrefix <> chunkBuilder
                                                 else chunkBuilder
                                             )
                                         )
@@ -289,6 +285,7 @@ createUpload rgr = do
                     Aws.newCreateMultipartUpload
                         (Aws._BucketName # rgr.bucketName)
                         (Aws._ObjectKey # rgr.reportPath)
+                        & Aws.S3.createMultipartUpload_contentType .~ rgr.contentType
 
             awsEnv <- asks (^. getAwsEnvL)
             eCreateMultiPartResponse <-
