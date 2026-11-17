@@ -25,7 +25,10 @@ tests =
       testCase "crc32 gives the standard check value" testCrc32,
       testCase "xlsxify keeps numbers as numbers" testXlsxifyNumbers,
       testCase "xlsxify writes numbers Excel would round as text" testXlsxifyPrecision,
+      testCase "xlsxify truncates to decimal places Excel cannot show and writes text" testXlsxifyManyDecimalPlaces,
+      testCase "xlsxify truncates to negative decimal places like csvify" testXlsxifyNegativeDecimalPlaces,
       testCase "xlsxify follows data paths and joins arrays like csvify" testXlsxifyPathsAndArrays,
+      testCase "xlsxify keeps decimal places of numbers joined from an array" testXlsxifyNumberArrays,
       testCase "xlsxRowBytes writes every cell so empty ones keep their column" testRowBytes,
       testCase "xlsxRowBytes escapes markup and characters XML cannot hold" testEscaping,
       testCase "sheetNameFor makes a valid sheet name" testSheetName,
@@ -89,6 +92,22 @@ testXlsxifyPrecision = do
         ("big", CellNumber "1E20" Nothing)
       ]
 
+testXlsxifyManyDecimalPlaces :: IO ()
+testXlsxifyManyDecimalPlaces = do
+  let config = Map.fromList [("tiny", ColumnSettings (Just 31) Nothing Nothing False)]
+      row = Aeson.object [("tiny", Aeson.Number 1.9e-31)]
+  -- The value keeps the 31 places it was truncated to, as in the CSV file; an
+  -- Excel number format shows at most 30, so the cell is text.
+  xlsxify config row @?= Map.fromList [("tiny", CellText "0.0000000000000000000000000000001")]
+  xlsxRowBytes config (mkXlsxStyles config) (Vector.fromList ["tiny"]) row
+    @?= "<row><c t=\"inlineStr\"><is><t>0.0000000000000000000000000000001</t></is></c></row>"
+
+testXlsxifyNegativeDecimalPlaces :: IO ()
+testXlsxifyNegativeDecimalPlaces = do
+  let config = Map.fromList [("rounded", ColumnSettings (Just (-2)) Nothing Nothing False)]
+  xlsxify config (Aeson.object [("rounded", Aeson.Number 1234.5)])
+    @?= Map.fromList [("rounded", CellNumber "1200" (Just 0))]
+
 testXlsxifyPathsAndArrays :: IO ()
 testXlsxifyPathsAndArrays = do
   let config =
@@ -108,6 +127,27 @@ testXlsxifyPathsAndArrays = do
       [ ("Card Type", CellText "VISA, MC"),
         ("Customer Email", CellText "ada@example.com"),
         ("tags", CellEmpty)
+      ]
+
+testXlsxifyNumberArrays :: IO ()
+testXlsxifyNumberArrays = do
+  let config =
+        Map.fromList
+          [ ("amounts", ColumnSettings (Just 2) Nothing Nothing False),
+            ("rates", ColumnSettings Nothing Nothing Nothing True)
+          ]
+      numbers = Aeson.Array . Vector.fromList
+      row =
+        Aeson.object
+          [ ("amounts", numbers [Aeson.Number 12.3, Aeson.Number 4.5, Aeson.String "7.891"]),
+            ("rates", numbers [Aeson.String "0.50", Aeson.String "1"]),
+            ("counts", numbers [Aeson.Number 1, Aeson.Number 2.5, numbers [Aeson.Number 3]])
+          ]
+  xlsxify config row
+    @?= Map.fromList
+      [ ("amounts", CellText "12.30, 4.50, 7.89"),
+        ("rates", CellText "0.50, 1"),
+        ("counts", CellText "1, 2.5, 3")
       ]
 
 testRowBytes :: IO ()

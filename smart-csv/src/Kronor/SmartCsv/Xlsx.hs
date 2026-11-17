@@ -51,12 +51,21 @@ import RIO
 -- | One cell of the sheet.
 data XlsxCell
   = CellText Text
-  | -- | A number as Excel reads it (see 'numberCell'), with the decimal places its
-    -- column shows when the column config sets them.
+  | -- | A number as Excel reads it (see 'excelNumber'), with the decimal places
+    -- its column shows when the column config sets them.
     CellNumber ByteString (Maybe Int)
   | CellBool Bool
   | CellEmpty
   deriving stock (Eq, Show)
+
+-- | A scalar of the response, read the way its column asks.
+data Leaf
+  = -- | A number, truncated to its column's decimal places when they are set, and
+    -- its own digits when Hasura sent it as a string.
+    LeafNumber Scientific (Maybe Int) (Maybe Text)
+  | LeafText Text
+  | LeafBool Bool
+  | LeafNull
 
 -- | Convert one GraphQL response row into cells keyed by header, the way
 -- 'Kronor.SmartCsv.Flatten.csvify' does for CSV: the same data paths, array
@@ -74,40 +83,77 @@ xlsxify colConfig (Aeson.Object obj) =
 
     renderValue :: Text -> [Text] -> Aeson.Value -> Maybe XlsxCell
     renderValue columnId path (Aeson.Array array) =
-      case mapMaybe (cellText <=< renderValue columnId path) (filter (/= Aeson.Null) (toList array)) of
-        [] -> Just CellEmpty
-        texts -> Just (CellText (Text.intercalate ", " texts))
-    renderValue columnId path value = resolveValue path value >>= renderLeaf columnId
+      Just $ case concatMap (itemTexts columnId path) (toList array) of
+        [] -> CellEmpty
+        texts -> CellText (Text.intercalate ", " texts)
+    renderValue columnId path value = leafCell <$> (resolveValue path value >>= readLeaf columnId)
 
-    renderLeaf :: Text -> Aeson.Value -> Maybe XlsxCell
-    renderLeaf columnId = \case
+    -- An array item as the texts it is joined from; a nested array adds its own
+    -- items, as 'csvify' does.
+    itemTexts :: Text -> [Text] -> Aeson.Value -> [Text]
+    itemTexts columnId path = \case
+      Aeson.Null -> []
+      Aeson.Array array -> concatMap (itemTexts columnId path) (toList array)
+      value -> maybeToList (resolveValue path value >>= readLeaf columnId >>= leafText)
+
+    readLeaf :: Text -> Aeson.Value -> Maybe Leaf
+    readLeaf columnId = \case
       Aeson.String text
-        | Just decimals <- configuredDecimals columnId ->
-            Just (maybe (CellText text) (\value -> numberCell (truncateScientific decimals value) (Just decimals)) (readScientific text))
-        -- A number Hasura sent as a string; its own digits are the fallback.
-        | columnIsNumeric columnId colConfig ->
-            Just (maybe (CellText text) (`CellNumber` Nothing) (readScientific text >>= excelNumber))
-        | otherwise -> Just (CellText text)
-      Aeson.Number value -> Just $ case configuredDecimals columnId of
-        Just decimals -> numberCell (truncateScientific decimals value) (Just decimals)
-        Nothing -> numberCell value Nothing
-      Aeson.Bool flag -> Just (CellBool flag)
-      Aeson.Null -> Just CellEmpty
+        | Just decimals <- columnDecimalPlaces columnId colConfig,
+          Just value <- readScientific text ->
+            Just (LeafNumber (truncateScientific decimals value) (Just decimals) Nothing)
+        | columnIsNumeric columnId colConfig,
+          Just value <- readScientific text ->
+            Just (LeafNumber value Nothing (Just text))
+        | otherwise -> Just (LeafText text)
+      Aeson.Number value -> Just $ case columnDecimalPlaces columnId colConfig of
+        Just decimals -> LeafNumber (truncateScientific decimals value) (Just decimals) Nothing
+        Nothing -> LeafNumber value Nothing Nothing
+      Aeson.Bool flag -> Just (LeafBool flag)
+      Aeson.Null -> Just LeafNull
       Aeson.Array _ -> Nothing
       Aeson.Object _ -> Nothing
 
-    configuredDecimals columnId = clampDecimals <$> columnDecimalPlaces columnId colConfig
-
     readScientific :: Text -> Maybe Scientific
     readScientific = readMaybe . Text.unpack
-
-    cellText = \case
-      CellText text | not (Text.null text) -> Just text
-      CellText _ -> Nothing
-      CellNumber literal _ -> Just (decodeUtf8Lenient literal)
-      CellBool flag -> Just (if flag then "True" else "False")
-      CellEmpty -> Nothing
 xlsxify _ v = error ("xlsxify: expected a JSON object, but received: " <> show v)
+
+-- | A leaf as a cell of its own.  A number stays a number when Excel can hold
+-- it unchanged and show its decimal places; otherwise it is text with the
+-- digits the CSV file has.
+leafCell :: Leaf -> XlsxCell
+leafCell = \case
+  LeafNumber value mDecimals mDigits
+    | Just literal <- excelNumber value,
+      all (<= excelMaxDecimalPlaces) mDecimals ->
+        CellNumber literal (max 0 <$> mDecimals)
+    | otherwise -> CellText (numberText value mDecimals mDigits)
+  LeafText text -> CellText text
+  LeafBool flag -> CellBool flag
+  LeafNull -> CellEmpty
+
+-- | A leaf as an item of a joined array, where a number keeps its decimal places
+-- as text.
+leafText :: Leaf -> Maybe Text
+leafText = \case
+  LeafNumber value mDecimals mDigits -> Just (numberText value mDecimals mDigits)
+  LeafText text | Text.null text -> Nothing
+  LeafText text -> Just text
+  LeafBool flag -> Just (if flag then "True" else "False")
+  LeafNull -> Nothing
+
+-- | A number written out like the CSV output does, with a decimal point.
+numberText :: Scientific -> Maybe Int -> Maybe Text -> Text
+numberText value mDecimals mDigits = case (mDecimals, mDigits) of
+  (Just decimals, _) -> Text.pack (formatScientific Fixed (Just decimals) value)
+  (Nothing, Just digits) -> digits
+  (Nothing, Nothing)
+    | exponent' >= 0 && exponent' <= 100 -> tshow (coefficient normalized * 10 ^ exponent')
+    | exponent' > 100 -> Text.pack (formatScientific Exponent Nothing value)
+    | otherwise -> Text.pack (formatScientific Fixed Nothing value)
+  where
+    normalized = normalize value
+    exponent' = base10Exponent normalized
 
 -- | Same truncation as the CSV output, so both files show the same digits.
 truncateScientific :: Int -> Scientific -> Scientific
@@ -116,16 +162,9 @@ truncateScientific decimals value =
       truncated = truncate (value * factor) :: Integer
    in scientific truncated (negate decimals)
 
-clampDecimals :: Int -> Int
-clampDecimals = max 0 . min 30
-
--- | A number cell, or a text cell with the exact digits when Excel would change
--- the number (see 'excelNumber').
-numberCell :: Scientific -> Maybe Int -> XlsxCell
-numberCell value mDecimals =
-  case excelNumber value of
-    Just literal -> CellNumber literal mDecimals
-    Nothing -> CellText (exactNumberText value mDecimals)
+-- | The most decimal places an Excel number format shows.
+excelMaxDecimalPlaces :: Int
+excelMaxDecimalPlaces = 30
 
 -- | The number as a cell value, when Excel can hold it unchanged: Excel keeps 15
 -- significant digits and exponents up to about ±308.
@@ -142,17 +181,6 @@ excelNumber value
     exponent' = base10Exponent normalized
     digitCount = length (show (abs digits))
 
-exactNumberText :: Scientific -> Maybe Int -> Text
-exactNumberText value = \case
-  Just decimals -> Text.pack (formatScientific Fixed (Just decimals) value)
-  Nothing
-    | exponent' >= 0 && exponent' <= 100 -> tshow (coefficient normalized * 10 ^ exponent')
-    | exponent' > 100 -> Text.pack (formatScientific Exponent Nothing value)
-    | otherwise -> Text.pack (formatScientific Fixed Nothing value)
-  where
-    normalized = normalize value
-    exponent' = base10Exponent normalized
-
 -- | Cell styles: the default one, and one number format per number of decimal
 -- places the column config uses.
 data XlsxStyles = XlsxStyles
@@ -167,7 +195,9 @@ mkXlsxStyles colConfig =
       stylesXml = Builder.toLazyByteString xml
     }
   where
-    decimalsUsed = Set.toAscList (Set.fromList (mapMaybe (fmap clampDecimals . (.decimalPlaces)) (Map.elems colConfig)))
+    -- Negative decimal places truncate to tens, hundreds, ... and show none, as in
+    -- CSV; more than Excel can show leave the cells as text (see 'leafCell').
+    decimalsUsed = Set.toAscList (Set.fromList (filter (<= excelMaxDecimalPlaces) (mapMaybe (fmap (max 0) . (.decimalPlaces)) (Map.elems colConfig))))
     formats = zip [164 :: Int ..] decimalsUsed
     formatCode decimals = "#,##0" <> (if decimals == 0 then "" else "." <> Builder.string7 (replicate decimals '0'))
     xml =

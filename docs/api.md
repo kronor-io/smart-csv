@@ -181,6 +181,8 @@ With `"format": "xlsx"` the export is an Excel file with one sheet, named after 
 - Numbers are number cells, shown with the reader's own decimal separator. A column with `decimalPlaces` truncates the same way and shows that many decimals with a thousands separator (`#,##0.00`)
 - A number sent as a string becomes a number cell in a column with `decimalPlaces` or one `detectNumericColumns` found to be numeric; elsewhere strings stay text, so leading zeros survive
 - A number with more than 15 significant digits, which Excel would round, is written as text with its exact digits
+- A column with `decimalPlaces` above 30, more than an Excel number format shows, keeps the requested precision and is written as text
+- Arrays are joined into text as in CSV; numbers in them keep their decimal places, with a decimal point (`12.30, 4.50`)
 - Booleans are Excel booleans (`TRUE`/`FALSE`, in the reader's language)
 - Text longer than Excel's 32,767 characters is cut there; control characters are written as Excel's `_xHHHH_` escapes
 

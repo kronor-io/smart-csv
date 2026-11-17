@@ -202,6 +202,7 @@ test-suite smart-csv-runner-test
     , http-conduit
     , http-types
     , lens-aeson
+    , process
     , rio
     , smart-csv
     , smart-csv-runner
