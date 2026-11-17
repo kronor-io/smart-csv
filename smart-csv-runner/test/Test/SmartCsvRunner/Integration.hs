@@ -427,8 +427,9 @@ testGeneratesXlsxAcrossParts = do
   cleanup pool
   deleteAllMailhogMessages
 
-  -- 1. Create test table + track + insert data.  md5 text barely compresses, so
-  -- the sheet grows past one upload part.
+  -- 1. Create test table + track + insert data.  Three unrelated md5 values per
+  -- row barely compress (about 8 MB for the sheet), so it grows past one upload
+  -- part; hashes that repeat in the next row would be compressed away.
   setupTestTable pool
 
   threadDelay 500_000 -- wait for Hasura schema reload
@@ -437,7 +438,7 @@ testGeneratesXlsxAcrossParts = do
       (testShardId, xlsxRowCount)
       [resultlessStatement|
                 insert into smart_csv.e2e_test_data (shard_id, amount, reference, created_at)
-                select $1::bigint, n, md5(n::text) || md5((n + 1)::text) || md5((n + 2)::text), now() + n * interval '1 millisecond'
+                select $1::bigint, n, md5('a' || n) || md5('b' || n) || md5('c' || n), now() + n * interval '1 millisecond'
                 from generate_series(1, $2::bigint) as n
             |]
 
