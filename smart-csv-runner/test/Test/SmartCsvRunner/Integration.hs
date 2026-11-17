@@ -5,6 +5,7 @@ where
 
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Lens
+import Data.ByteString qualified as ByteString
 import Data.ByteString.Lazy qualified as LBS
 import Data.Csv qualified as CSV
 import Data.Map.Strict qualified as Map
@@ -23,6 +24,7 @@ import RIO.Time (UTCTime, addUTCTime, defaultTimeLocale, formatTime, getCurrentT
 import RIO.Vector qualified as Vec
 import SmartCsvApi.Auth qualified as Auth
 import Test.Tasty (TestTree, testGroup)
+import System.Process (readProcessWithExitCode)
 import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
 
 -- | Port the smart-csv-runner REST API listens on.
@@ -44,7 +46,8 @@ integrationTests =
     [ testCase "REST API rejects invalid payload" testRejectsInvalidPayload,
       testCase "REST API generates CSV end-to-end" testGeneratesCsvEndToEnd,
       testCase "REST API generates CSV with inline columnConfig" testGeneratesCsvWithInlineColumnConfig,
-      testCase "REST API generates CSV with named columnConfigName" testGeneratesCsvWithNamedColumnConfig
+      testCase "REST API generates CSV with named columnConfigName" testGeneratesCsvWithNamedColumnConfig,
+      testCase "REST API generates an Excel file across several upload parts" testGeneratesXlsxAcrossParts
     ]
 
 -- ──────────────────────────────────────────────────────────────
@@ -210,7 +213,7 @@ testGeneratesCsvEndToEnd = do
   Map.lookup "ref-ccc" refAmountsNorm @?= Just "300"
 
   -- 8. Verify completion email was sent with a valid download link
-  assertEmailSentWithValidLink "test@example.com" csvLink
+  assertEmailSentWithValidLink "CSV" "test@example.com" csvLink
 
   -- 9. Cleanup
   cleanup pool
@@ -304,7 +307,7 @@ testGeneratesCsvWithInlineColumnConfig = do
   assertNotElem "amount_col" allHeaders
 
   -- 5. Verify completion email was sent with a valid download link
-  assertEmailSentWithValidLink "test@example.com" csvLink
+  assertEmailSentWithValidLink "CSV" "test@example.com" csvLink
 
   -- 6. Cleanup
   cleanup pool
@@ -399,11 +402,145 @@ testGeneratesCsvWithNamedColumnConfig = do
   assertNotElem "amount_col" allHeaders
 
   -- 6. Verify completion email was sent with a valid download link
-  assertEmailSentWithValidLink "test@example.com" csvLink
+  assertEmailSentWithValidLink "CSV" "test@example.com" csvLink
 
   -- 7. Cleanup
   cleanupColumnConfigPreset pool
   cleanup pool
+
+-- ──────────────────────────────────────────────────────────────
+-- Test: end-to-end Excel generation across several upload parts
+-- ──────────────────────────────────────────────────────────────
+
+-- | Enough rows that the compressed sheet passes the 5 MB upload part size, so
+-- the file is assembled from several parts and its end goes into the last one.
+xlsxRowCount :: Int64
+xlsxRowCount = 120_000
+
+testGeneratesXlsxAcrossParts :: IO ()
+testGeneratesXlsxAcrossParts = do
+  pool <- mkPool
+  now <- getCurrentTime
+  let oneHour = addUTCTime (secondsToNominalDiffTime 3600) now
+
+  -- 0. Cleanup from any previous run
+  cleanup pool
+  deleteAllMailhogMessages
+
+  -- 1. Create test table + track + insert data.  Three unrelated md5 values per
+  -- row barely compress (about 8 MB for the sheet), so it grows past one upload
+  -- part; hashes that repeat in the next row would be compressed away.
+  setupTestTable pool
+
+  threadDelay 500_000 -- wait for Hasura schema reload
+  runSession pool
+    $ Hasql.Session.statement
+      (testShardId, xlsxRowCount)
+      [resultlessStatement|
+                insert into smart_csv.e2e_test_data (shard_id, amount, reference, created_at)
+                select $1::bigint, n, md5('a' || n) || md5('b' || n) || md5('c' || n), now() + n * interval '1 millisecond'
+                from generate_series(1, $2::bigint) as n
+            |]
+
+  -- 2. POST an Excel export, paginated by id
+  let restInput =
+        Aeson.object
+          [ "shardId" Aeson..= testShardId,
+            "recipient" Aeson..= ("test@example.com" :: Text),
+            "graphqlPaginationKey" Aeson..= ("id" :: Text),
+            "orderBy" Aeson..= [Aeson.object ["id" Aeson..= ("DESC" :: Text)]],
+            "graphqlQueryBody" Aeson..= orderedTestTableQueryBody,
+            "graphqlQueryVariables" Aeson..= mkQueryVariables now oneHour,
+            "columnConfig" Aeson..= Aeson.object ["amount_col" Aeson..= Aeson.object ["header" Aeson..= ("Amount" :: Text), "decimalPlaces" Aeson..= (2 :: Int)]],
+            "format" Aeson..= ("xlsx" :: Text)
+          ]
+
+  resp <- postRestApiWithAuth "/api/v1/csv/generate" restInput
+  let status = HTTP.getResponseStatusCode resp
+  when (status /= 200)
+    $ assertFailure [i|Expected HTTP 200 but got #{status}: #{decodeUtf8Lenient (LBS.toStrict (HTTP.getResponseBody resp))}|]
+
+  reportId <- extractReportId resp
+
+  -- 3. Wait for the link
+  waitFor 180 $ do
+    result <-
+      Hasql.Pool.use pool
+        $ Hasql.Session.statement
+          reportId
+          [singletonStatement|
+                    select exists(
+                        select 1
+                        from smart_csv.generated_csv
+                        where id = $1::bigint and link is not null
+                    )::bool
+                |]
+    pure $ result == Right True
+
+  -- 4. The file was uploaded in more than one part
+  progress <-
+    Hasql.Pool.use pool
+      $ Hasql.Session.statement
+        reportId
+        [singletonStatement|
+                  select coalesce(array_length(part_entities, 1), 0)::int, number_of_rows::bigint
+                  from smart_csv.generated_csv
+                  where id = $1::bigint
+              |]
+  case progress of
+    Left err -> assertFailure (show err)
+    Right (parts, rowCount) -> do
+      assertBool [i|Expected several upload parts, got #{parts}|] (parts >= 2)
+      rowCount @?= xlsxRowCount
+
+  -- 5. Download the file and read it with Info-ZIP's unzip, not this repository's code
+  xlsxLink <- fetchCsvLink pool reportId
+  assertBool [i|Expected an .xlsx object, got #{xlsxLink}|] (".xlsx?" `Text.isInfixOf` xlsxLink)
+  xlsxRequest <- HTTP.parseRequest (Text.unpack xlsxLink)
+  xlsxBytes <- HTTP.getResponseBody <$> HTTP.httpBS xlsxRequest
+  sheetXml <- withSystemTempDirectory "smart-csv-xlsx" \directory -> do
+    let xlsxPath = directory <> "/export.xlsx"
+    writeFileBinary xlsxPath xlsxBytes
+    runUnzip ["-tq", xlsxPath]
+    runUnzip ["-q", xlsxPath, "xl/worksheets/sheet1.xml", "-d", directory]
+    readFileBinary (directory <> "/xl/worksheets/sheet1.xml")
+
+  -- The header row and one row per record, the highest id first
+  let rows = drop 1 (splitOn "<row>" sheetXml)
+  length rows @?= fromIntegral xlsxRowCount + 1
+  case rows of
+    header : firstRow : _ -> do
+      let amountCell = encodeUtf8 [i|<c s="1"><v>#{xlsxRowCount}</v></c>|]
+      assertBool [i|Unexpected header row: #{decodeUtf8Lenient header}|] ("<t>Amount</t>" `ByteString.isInfixOf` header)
+      assertBool [i|Expected the amount as a number cell with two decimals: #{decodeUtf8Lenient firstRow}|] (amountCell `ByteString.isInfixOf` firstRow)
+    _ -> assertFailure "The sheet has no data rows"
+
+  -- 6. Verify completion email names the Excel file
+  assertEmailSentWithValidLink "Excel" "test@example.com" xlsxLink
+
+  -- 7. Cleanup
+  cleanup pool
+  where
+    runUnzip arguments = do
+      (exitCode, out, err) <- readProcessWithExitCode "unzip" arguments ""
+      unless (exitCode == ExitSuccess)
+        $ assertFailure [i|unzip #{unwords arguments} failed (#{exitCode}): #{out}#{err}|]
+
+    splitOn separator bytes = case ByteString.breakSubstring separator bytes of
+      (before, rest)
+        | ByteString.null rest -> [before]
+        | otherwise -> before : splitOn separator (ByteString.drop (ByteString.length separator) rest)
+
+-- | 'testTableQueryBody' with ordering and the id, for paginating by id.
+orderedTestTableQueryBody :: Text
+orderedTestTableQueryBody =
+  "query Q($rowLimit: Int!, $paginationCondition: SmartCsvE2eTestDataBoolExp!, $conditions: SmartCsvE2eTestDataBoolExp!, $orderBy: [SmartCsvE2eTestDataOrderBy!]) {\
+  \ smartCsvE2eTestData(limit: $rowLimit, where: {_and: [$paginationCondition, $conditions]}, orderBy: $orderBy) {\
+  \   row_id: id\
+  \   amount_col: amount\
+  \   reference_col: reference\
+  \ }\
+  \}"
 
 -- ──────────────────────────────────────────────────────────────
 -- Helpers
@@ -616,8 +753,8 @@ fetchMailhogMessages recipient = do
 
 -- | Assert that MailHog received an email to the given recipient with
 -- the expected subject and a valid download link in the HTML body.
-assertEmailSentWithValidLink :: Text -> Text -> IO ()
-assertEmailSentWithValidLink recipient csvLink = do
+assertEmailSentWithValidLink :: Text -> Text -> Text -> IO ()
+assertEmailSentWithValidLink fileKind recipient csvLink = do
   -- Wait for the email to arrive (up to 10 seconds)
   waitFor 10 $ do
     msgs <- fetchMailhogMessages recipient
@@ -630,7 +767,7 @@ assertEmailSentWithValidLink recipient csvLink = do
 
   -- Verify subject
   let mSubject = msg ^? key "Content" . key "Headers" . key "Subject" . nth 0 . _String
-  mSubject @?= Just "Your CSV file is ready for download"
+  mSubject @?= Just ("Your " <> fileKind <> " file is ready for download")
 
   -- Verify the HTML body contains the download link and expected text.
   -- MailHog returns quoted-printable encoded body (= becomes =3D, line wraps with =\n),
@@ -644,8 +781,8 @@ assertEmailSentWithValidLink recipient csvLink = do
         [i|Email body should contain a link with href matching the CSV link.\nExpected href containing: #{csvLink}\nBody: #{decodedBody}|]
         (csvLink `Text.isInfixOf` decodedBody)
       assertBool
-        [i|Email body should contain 'Download CSV' link text.\nBody: #{decodedBody}|]
-        ("Download CSV" `Text.isInfixOf` decodedBody)
+        [i|Email body should contain 'Download #{fileKind}' link text.\nBody: #{decodedBody}|]
+        (("Download " <> fileKind) `Text.isInfixOf` decodedBody)
 
 -- | Decode quoted-printable encoding (=XX hex codes, =\r\n soft line breaks).
 decodeQuotedPrintable :: Text -> Text

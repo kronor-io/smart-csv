@@ -5,7 +5,6 @@ module SmartCsvRunner.CsvGeneration.Generate (generateCsv, onError, getDbPage) w
 import Amazonka qualified as Aws
 import Amazonka.S3 qualified as Aws
 import Data.Aeson qualified as Aeson
-import Data.Csv qualified as Csv
 import Hasql.TH
 import JobSchemas.GenerateSettlementCsv
 import Kronor.Db qualified
@@ -38,13 +37,17 @@ generateCsv ::
   (HasCallStack) =>
   (Maybe cursor -> Job env (Maybe (EncodedCsvPage cursor))) ->
   Db.Transaction Bool ->
-  Vector Csv.Name ->
+  -- | bytes that open the file, ahead of the first page
+  LByteString ->
   (cursor -> Text) ->
+  -- | object key
   Text ->
+  -- | Content-Type of the object, when the bucket's default will not do
+  Maybe Text ->
   Int ->
   Payload ->
   Job env (Maybe Text)
-generateCsv fetchPage transactionsTest transactionsHeader toText fileKey maxRows payload@Payload {shardId, reportId, startDate, endDate, stateMachineId} = do
+generateCsv fetchPage transactionsTest filePrefix toText fileKey contentType maxRows payload@Payload {shardId, reportId, startDate, endDate, stateMachineId} = do
   Db.writeOr (retryS <=< clarifyError tableName) do
     Kronor.Db.statement
       (toInt64 payload.shardId, stateMachineId, Aeson.toJSON payload)
@@ -74,6 +77,7 @@ generateCsv fetchPage transactionsTest transactionsHeader toText fileKey maxRows
                 bucketName = s3Config.bucket ^. Aws._BucketName,
                 lastPaginationKey = Nothing,
                 uploadId = Nothing,
+                contentType,
                 lastUploadedPart = Nothing,
                 partEntity = "",
                 startDate,
@@ -88,7 +92,7 @@ generateCsv fetchPage transactionsTest transactionsHeader toText fileKey maxRows
           $ multiPartUploadFromPagination
             reportGenerationRow
             (limitedFetchPage rowCountRef)
-            transactionsHeader
+            filePrefix
             fetchPartEntities
             updateProgress
             onSuccess

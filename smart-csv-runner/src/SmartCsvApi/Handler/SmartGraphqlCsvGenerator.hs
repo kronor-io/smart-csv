@@ -15,6 +15,7 @@ import Hasql.Pool qualified
 import Hasql.Transaction.Sessions (IsolationLevel (..), Mode (..), transaction)
 import Kronor.Db (statement)
 import Kronor.Db.Models.Shard (shardToInt64)
+import Kronor.SmartCsv.ExportFormat (exportFormatText)
 import Kronor.SmartCsv.TokenClaims (HasuraRoleError (..), selectHasuraRole)
 import RIO
 import SmartCsvApi.Auth (verifyBearerToken)
@@ -87,7 +88,8 @@ handleValidated apiEnv tokenClaims input = do
               tokenClaims,
               Val.columnConfig validated,
               Val.columnConfigName validated,
-              Val.detectNumericColumns validated
+              Val.detectNumericColumns validated,
+              exportFormatText (Val.format validated)
             )
             Statements.insertSmartGraphqlCsvGenerator
 

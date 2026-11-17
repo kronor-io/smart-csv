@@ -1,10 +1,13 @@
 module Kronor.SmartCsv.Query
   ( GenericQuery (..),
     DecodedResponsePage (..),
+    EncodedResponsePage (..),
     ResponseError (..),
     buildRequestBody,
+    csvRowBytes,
     decodeResponseChunk,
     decodeResponseChunkWith,
+    encodeResponseChunkWith,
     decodedResponsePageBytes,
     decodeResponsePage,
     decodeResponsePageWith,
@@ -64,6 +67,14 @@ data DecodedResponsePage = DecodedResponsePage
     lastRawRow :: Maybe Aeson.Value
   }
 
+-- | A page of rows written by any row encoder (see 'encodeResponseChunkWith').
+data EncodedResponsePage = EncodedResponsePage
+  { encodedRows :: LByteString.ByteString,
+    encodedRowBytes :: Int64,
+    rowCount :: Int,
+    lastRawRow :: Maybe Aeson.Value
+  }
+
 decodedResponsePageBytes :: DecodedResponsePage -> LByteString
 decodedResponsePageBytes = (.encodedRows)
 
@@ -107,6 +118,20 @@ decodeResponseChunkWith :: Int64 -> ColumnConfig -> Text -> Map Text Csv.Field -
 decodeResponseChunkWith maxChunkBytes colConfig root emptyCsvRow header readChunk =
   decodeResponseChunk maxChunkBytes colConfig root emptyCsvRow header <$> readAllChunks readChunk
 
+-- | Like 'decodeResponseChunkWith', but each row is written by @encodeRow@ instead
+-- of always as a CSV record.
+encodeResponseChunkWith :: Int64 -> Text -> (Aeson.Value -> LByteString) -> IO ByteString -> IO (Either String (Either ResponseError EncodedResponsePage))
+encodeResponseChunkWith maxChunkBytes root encodeRow readChunk =
+  tokenEncodePage (Just maxChunkBytes) root encodeRow . LByteString.fromStrict <$> readAllChunks readChunk
+
+-- | One response row as a CSV record, its columns in @header@ order.
+csvRowBytes :: ColumnConfig -> Text -> Map Text Csv.Field -> Vector Csv.Name -> Aeson.Value -> LByteString
+csvRowBytes colConfig root emptyCsvRow header rowValue =
+  Builder.toLazyByteString (Csv.Builder.encodeNamedRecordWith Csv.defaultEncodeOptions header (csvRow colConfig root emptyCsvRow rowValue))
+
+csvRow :: ColumnConfig -> Text -> Map Text Csv.Field -> Aeson.Value -> Map Text Csv.Field
+csvRow colConfig root emptyCsvRow rowValue = csvify colConfig root rowValue `Map.union` emptyCsvRow
+
 -- | Fully consume a chunk reader into a single strict 'ByteString'.
 readAllChunks :: IO ByteString -> IO ByteString
 readAllChunks readChunk = go []
@@ -117,10 +142,6 @@ readAllChunks readChunk = go []
         then pure (ByteString.concat (reverse acc))
         else go (chunk : acc)
 
--- | Walk the GraphQL response token stream, flattening each row of
--- @data.<root>@ into a CSV record.  Streaming: only one row's 'Aeson.Value' is
--- built at a time before it is encoded and discarded.  With @Just maxChunkBytes@
--- it stops once the encoded CSV reaches that size.
 tokenDecodePage ::
   Maybe Int64 ->
   ColumnConfig ->
@@ -130,6 +151,28 @@ tokenDecodePage ::
   LByteString ->
   Either String (Either ResponseError DecodedResponsePage)
 tokenDecodePage mMaxChunkBytes colConfig root emptyCsvRow header lbs =
+  fmap (fmap withLastRow) (tokenEncodePage mMaxChunkBytes root (csvRowBytes colConfig root emptyCsvRow header) lbs)
+  where
+    withLastRow page =
+      DecodedResponsePage
+        { encodedRows = page.encodedRows,
+          encodedRowBytes = page.encodedRowBytes,
+          rowCount = page.rowCount,
+          lastRow = csvRow colConfig root emptyCsvRow <$> page.lastRawRow,
+          lastRawRow = page.lastRawRow
+        }
+
+-- | Walk the GraphQL response token stream, writing each row of @data.<root>@
+-- with @encodeRow@.  Streaming: only one row's 'Aeson.Value' is built at a time
+-- before it is encoded and discarded.  With @Just maxChunkBytes@ it stops once
+-- the encoded rows reach that size.
+tokenEncodePage ::
+  Maybe Int64 ->
+  Text ->
+  (Aeson.Value -> LByteString) ->
+  LByteString ->
+  Either String (Either ResponseError EncodedResponsePage)
+tokenEncodePage mMaxChunkBytes root encodeRow lbs =
   case lbsToTokens lbs of
     TkErr err -> Left err
     TkRecordOpen responseObj -> topLevel responseObj
@@ -137,7 +180,7 @@ tokenDecodePage mMaxChunkBytes colConfig root emptyCsvRow header lbs =
   where
     rootKey = Aeson.Key.fromText root
 
-    topLevel :: TkRecord k String -> Either String (Either ResponseError DecodedResponsePage)
+    topLevel :: TkRecord k String -> Either String (Either ResponseError EncodedResponsePage)
     topLevel = \case
       TkRecordErr err -> Left err
       TkRecordEnd _ -> Right (Left ResponseMissingData)
@@ -151,7 +194,7 @@ tokenDecodePage mMaxChunkBytes colConfig root emptyCsvRow header lbs =
             _ -> Right (Left ResponseMissingData)
         | otherwise -> skipValue valueTokens >>= topLevel
 
-    dataLevel :: TkRecord k String -> Either String (Either ResponseError DecodedResponsePage)
+    dataLevel :: TkRecord k String -> Either String (Either ResponseError EncodedResponsePage)
     dataLevel = \case
       TkRecordErr err -> Left err
       TkRecordEnd _ -> Right (Left ResponseMissingRootData)
@@ -162,31 +205,29 @@ tokenDecodePage mMaxChunkBytes colConfig root emptyCsvRow header lbs =
             _ -> Right (Left ResponseMissingRootData)
         | otherwise -> skipValue valueTokens >>= dataLevel
 
-    foldRows :: TkArray k String -> Either String (Either ResponseError DecodedResponsePage)
-    foldRows = go [] 0 0 Nothing Nothing
+    foldRows :: TkArray k String -> Either String (Either ResponseError EncodedResponsePage)
+    foldRows = go [] 0 0 Nothing
       where
-        go !revEncoded !encodedBytes !count !mLastRow !mLastRawRow = \case
+        go !revEncoded !encodedBytes !count !mLastRawRow = \case
           TkArrayErr err -> Left err
-          TkArrayEnd _ -> Right (Right (mkPage revEncoded encodedBytes count mLastRow mLastRawRow))
+          TkArrayEnd _ -> Right (Right (mkPage revEncoded encodedBytes count mLastRawRow))
           TkItem rowTokens -> do
             (rowValue, rest) <- tokensToValue rowTokens
-            let row = csvify colConfig root rowValue `Map.union` emptyCsvRow
-                encodedRow = Builder.toLazyByteString (Csv.Builder.encodeNamedRecordWith Csv.defaultEncodeOptions header row)
+            let encodedRow = encodeRow rowValue
                 revEncoded' = encodedRow : revEncoded
                 encodedBytes' = encodedBytes + LByteString.length encodedRow
                 count' = count + 1
             case mMaxChunkBytes of
               Just maxChunkBytes
                 | encodedBytes' >= maxChunkBytes ->
-                    Right (Right (mkPage revEncoded' encodedBytes' count' (Just row) (Just rowValue)))
-              _ -> go revEncoded' encodedBytes' count' (Just row) (Just rowValue) rest
+                    Right (Right (mkPage revEncoded' encodedBytes' count' (Just rowValue)))
+              _ -> go revEncoded' encodedBytes' count' (Just rowValue) rest
 
-    mkPage revEncoded encodedBytes count mLastRow mLastRawRow =
-      DecodedResponsePage
+    mkPage revEncoded encodedBytes count mLastRawRow =
+      EncodedResponsePage
         { encodedRows = LByteString.concat (reverse revEncoded),
           encodedRowBytes = encodedBytes,
           rowCount = count,
-          lastRow = mLastRow,
           lastRawRow = mLastRawRow
         }
 

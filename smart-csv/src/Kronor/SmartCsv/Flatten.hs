@@ -3,6 +3,7 @@
 module Kronor.SmartCsv.Flatten
   ( csvify,
     gatherSelectionNames,
+    resolveValue,
     selectionOutputName,
   )
 where
@@ -81,28 +82,31 @@ csvify colConfig _ (Aeson.Object (Aeson.KeyMap.toMapText -> obj)) =
           if ByteString.Char8.null rendered then Nothing else Just rendered
     renderValue columnId path value = resolveValue path value >>= renderLeaf columnId
 
-    resolveValue :: [Text] -> Aeson.Value -> Maybe Aeson.Value
-    resolveValue [] value@(Aeson.String _) = Just value
-    resolveValue [] value@(Aeson.Number _) = Just value
-    resolveValue [] value@(Aeson.Bool _) = Just value
-    resolveValue [] Aeson.Null = Just Aeson.Null
-    resolveValue [] (Aeson.Object obj') =
-      case Aeson.KeyMap.toList obj' of
-        [(_, value)] -> resolveValue [] value
-        _ -> Nothing
-    resolveValue path (Aeson.Array array) = do
-      value <- array Data.Vector.!? 0
-      resolveValue path value
-    resolveValue (pathPart : rest) (Aeson.Object obj') = do
-      value <- Aeson.KeyMap.lookup (Aeson.Key.fromText pathPart) obj'
-      resolveValue rest value
-    resolveValue _ _ = Nothing
-
     extractColumn :: (Text, Aeson.Value) -> Maybe (Map Text Csv.Field)
     extractColumn (columnId, value) = do
       fieldValue <- renderValue columnId (columnDataPath columnId colConfig) value
       pure (singletonField columnId fieldValue)
 csvify _ _ v = error ("csvify: expected a JSON object, but received: " <> show v)
+
+-- | Follow a column's data path down to the scalar it prints.  An array resolves
+-- through its first element; an object with a single key resolves to that key's
+-- value once the path is used up.
+resolveValue :: [Text] -> Aeson.Value -> Maybe Aeson.Value
+resolveValue [] value@(Aeson.String _) = Just value
+resolveValue [] value@(Aeson.Number _) = Just value
+resolveValue [] value@(Aeson.Bool _) = Just value
+resolveValue [] Aeson.Null = Just Aeson.Null
+resolveValue [] (Aeson.Object obj') =
+  case Aeson.KeyMap.toList obj' of
+    [(_, value)] -> resolveValue [] value
+    _ -> Nothing
+resolveValue path (Aeson.Array array) = do
+  value <- array Data.Vector.!? 0
+  resolveValue path value
+resolveValue (pathPart : rest) (Aeson.Object obj') = do
+  value <- Aeson.KeyMap.lookup (Aeson.Key.fromText pathPart) obj'
+  resolveValue rest value
+resolveValue _ _ = Nothing
 
 gatherSelectionNames :: Selection RAW -> [Text]
 gatherSelectionNames = go

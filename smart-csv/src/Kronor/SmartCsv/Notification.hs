@@ -36,32 +36,33 @@ defaultEnqueueMeta =
         }
 
 
-mkCompletionEmail :: Maybe Text -> CompletionEmail
-mkCompletionEmail mUrl =
+-- | The email for a finished export; @fileKind@ names the file ("CSV", "Excel").
+mkCompletionEmail :: Text -> Maybe Text -> CompletionEmail
+mkCompletionEmail fileKind mUrl =
     case mUrl of
         Just url ->
             CompletionEmail
-                { subject = "Your CSV file is ready for download"
+                { subject = "Your " <> fileKind <> " file is ready for download"
                 , htmlBody =
                     mconcat
                         [ "<html>\n"
                         , "  <body>\n"
-                        , "    <p>Your requested CSV file is ready for download:</p>\n"
+                        , "    <p>Your requested " <> fileKind <> " file is ready for download:</p>\n"
                         , "    <a href=\""
                         , url
-                        , "\">Download CSV</a>\n"
+                        , "\">Download " <> fileKind <> "</a>\n"
                         , "  </body>\n"
                         , "</html>\n"
                         ]
                 }
         Nothing ->
             CompletionEmail
-                { subject = "Your CSV file contained no data"
+                { subject = "Your " <> fileKind <> " file contained no data"
                 , htmlBody =
                     mconcat
                         [ "<html>\n"
                         , "  <body>\n"
-                        , "    <p>Your requested CSV file was not produced because it contained no data.</p>\n"
+                        , "    <p>Your requested " <> fileKind <> " file was not produced because it contained no data.</p>\n"
                         , "  </body>\n"
                         , "</html>\n"
                         ]

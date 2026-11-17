@@ -22,6 +22,7 @@ import RIO
 import RIO.ByteString.Lazy qualified as LByteString
 import RIO.List (headMaybe)
 import RIO.Set qualified as Set
+import Test.Kronor.SmartCsv.Xlsx qualified
 import Test.Tasty (TestTree, defaultMain, testGroup)
 import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
 
@@ -97,7 +98,8 @@ tests =
       testCase "inferHeaders with custom config renames aliased columns" testInferHeadersCustomConfig,
       testCase "extractCursor returns error when pagination field is not selected" testExtractCursorMissingSelection,
       testCase "extractCursor supports nested pagination fields" testExtractCursorNestedField,
-      testCase "decodeResponseRows with empty config uses alias ids" testDecodeResponseRowsPassThrough
+      testCase "decodeResponseRows with empty config uses alias ids" testDecodeResponseRowsPassThrough,
+      Test.Kronor.SmartCsv.Xlsx.tests
     ]
 
 testCsvify :: IO ()
@@ -588,7 +590,7 @@ testSelectHasuraRoleMissingClaims =
 
 testCompletionEmailWithUrl :: IO ()
 testCompletionEmailWithUrl =
-  mkCompletionEmail (Just "https://signed.example.com/report.csv")
+  mkCompletionEmail "CSV" (Just "https://signed.example.com/report.csv")
     @?= CompletionEmail
       { subject = "Your CSV file is ready for download",
         htmlBody =
@@ -602,7 +604,7 @@ testCompletionEmailWithUrl =
 
 testCompletionEmailNoData :: IO ()
 testCompletionEmailNoData =
-  mkCompletionEmail Nothing
+  mkCompletionEmail "CSV" Nothing
     @?= CompletionEmail
       { subject = "Your CSV file contained no data",
         htmlBody =

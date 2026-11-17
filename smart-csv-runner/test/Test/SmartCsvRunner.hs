@@ -10,6 +10,7 @@ import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Lazy qualified as LBS
 import Data.Text qualified as Text
 import Kronor.Db.Types.Bigint (Bigint (..))
+import Kronor.SmartCsv.ExportFormat (ExportFormat (..))
 import Network.HTTP.Types.Status (status200, status400)
 import Network.Wai (defaultRequest, pathInfo, requestHeaders, requestMethod)
 import Network.Wai.Test qualified as WaiTest
@@ -52,6 +53,9 @@ tests =
           testCase "validation turns numeric column detection off when it is not requested" testValidationDetectNumericColumnsDefault,
           testCase "validation keeps requested numeric column detection" testValidationDetectNumericColumnsRequested,
           testCase "validation rejects orderBy that does not start with pagination key" testValidationRejectsOrderByMismatch,
+          testCase "validation exports CSV when no format is requested" testValidationFormatDefault,
+          testCase "input json decoding accepts the xlsx format" testInputJsonDecodeXlsxFormat,
+          testCase "input json decoding rejects an unknown format" testInputJsonDecodeUnknownFormat,
           testCase "verifyBearerToken rejects invalid signature" testVerifyBearerTokenInvalidSig,
           testCase "verifyBearerToken accepts valid token" testVerifyBearerTokenValid,
           testCase "signJwtFromClaims produces verifiable token claims" testSignJwtFromClaimsRoundtrip
@@ -75,7 +79,8 @@ mkInput =
       columnConfig = Nothing,
       columnConfigName = Nothing,
       detectNumericColumns = Nothing,
-      hasuraRole = Nothing
+      hasuraRole = Nothing,
+      format = Nothing
     }
 
 testJwtSecret :: Text
@@ -333,6 +338,24 @@ signTestJwt secret payload = do
   case result of
     Left err -> error (show err)
     Right compact -> pure (decodeUtf8Lenient (LBS.toStrict compact))
+
+testValidationFormatDefault :: IO ()
+testValidationFormatDefault =
+  fmap (.format) (Val.validateSmartGraphqlCsvGeneratorInput mkInput) @?= Right Csv
+
+testInputJsonDecodeXlsxFormat :: IO ()
+testInputJsonDecodeXlsxFormat =
+  fmap (.format) (Aeson.eitherDecode (withFormat "xlsx") :: Either String SmartGraphqlCsvGeneratorInput) @?= Right (Just Xlsx)
+
+testInputJsonDecodeUnknownFormat :: IO ()
+testInputJsonDecodeUnknownFormat =
+  isLeft (Aeson.eitherDecode (withFormat "pdf") :: Either String SmartGraphqlCsvGeneratorInput) @?= True
+
+-- | 'mkInput' as JSON, with its format set to @format@.
+withFormat :: Text -> LBS.ByteString
+withFormat format = case Aeson.toJSON mkInput of
+  Aeson.Object fields -> Aeson.encode (Aeson.Object (KeyMap.insert "format" (Aeson.String format) fields))
+  other -> Aeson.encode other
 
 testValidationDetectNumericColumnsDefault :: IO ()
 testValidationDetectNumericColumnsDefault =

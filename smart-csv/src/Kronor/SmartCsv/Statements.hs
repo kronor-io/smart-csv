@@ -77,7 +77,7 @@ selectGeneratedCsvPayload =
     |]
 
 
-selectGeneratorConfig :: Statement (Int64, Int64) (GenericQuery, Aeson.Value, Text, Maybe Aeson.Value, Maybe Text, Bool)
+selectGeneratorConfig :: Statement (Int64, Int64) (GenericQuery, Aeson.Value, Text, Maybe Aeson.Value, Maybe Text, Bool, Text)
 selectGeneratorConfig =
     [singletonStatement|
         select $GenericQuery{paginationKey = pagination_key::text?, orderBy = order_by::jsonb?, query = query::text, variables = variables::jsonb},
@@ -85,7 +85,8 @@ selectGeneratorConfig =
             recipient::text,
             column_config::jsonb?,
             column_config_name::text?,
-            detect_numeric_columns::bool
+            detect_numeric_columns::bool,
+            file_format::text
         from smart_csv.smart_graphql_csv_generator
         where shard_id = $1::bigint
           and id = $2::bigint
