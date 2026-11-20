@@ -58,7 +58,8 @@ tests =
           testCase "input json decoding rejects an unknown format" testInputJsonDecodeUnknownFormat,
           testCase "verifyBearerToken rejects invalid signature" testVerifyBearerTokenInvalidSig,
           testCase "verifyBearerToken accepts valid token" testVerifyBearerTokenValid,
-          testCase "signJwtFromClaims produces verifiable token claims" testSignJwtFromClaimsRoundtrip
+          testCase "signJwtFromClaims produces verifiable token claims" testSignJwtFromClaimsRoundtrip,
+          testCase "signJwtFromClaims leaves out claims the source token did not have" testSignJwtFromClaimsOmitsMissingClaims
         ],
       integrationTests
     ]
@@ -324,6 +325,25 @@ testSignJwtFromClaimsRoundtrip = do
       KeyMap.lookup "https://hasura.io/jwt/claims" claims @?= Just hasuraClaims
       isJust (KeyMap.lookup "iat" claims) @?= True
       isJust (KeyMap.lookup "exp" claims) @?= True
+    Right other -> assertFailure ("Expected JWT claims object but got: " <> show other)
+
+testSignJwtFromClaimsOmitsMissingClaims :: IO ()
+testSignJwtFromClaimsOmitsMissingClaims = do
+  let secret = testJwtSecret
+  signed <- signJwtFromClaims secret Nothing (Just exportClaims) Nothing Nothing
+  token <- case signed of
+    Left err -> assertFailure ("Expected token signing to succeed but got: " <> Text.unpack err) >> pure ""
+    Right jwt -> pure jwt
+  verified <- verifyBearerToken secret ("Bearer " <> token)
+  case verified of
+    Left err -> assertFailure ("Expected valid token but got: " <> Text.unpack err)
+    Right (Aeson.Object claims) -> do
+      -- A null "tid" makes Kronor's graphql-engine reject the token, so it must be absent.
+      KeyMap.lookup "tid" claims @?= Nothing
+      KeyMap.lookup "ttype" claims @?= Nothing
+      KeyMap.lookup "tname" claims @?= Nothing
+      KeyMap.lookup "associated_email" claims @?= Nothing
+      KeyMap.lookup "https://hasura.io/jwt/claims" claims @?= Just exportClaims
     Right other -> assertFailure ("Expected JWT claims object but got: " <> show other)
 
 -- | Create a minimal HS256 JWT for testing using jose's own signing.

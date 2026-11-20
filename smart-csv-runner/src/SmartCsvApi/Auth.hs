@@ -19,16 +19,22 @@ signJwtFromClaims jwtSecret associatedEmail hasuraClaims tokenType tokenId = do
         Left err -> pure (Left err)
         Right jwk -> do
             let header = JOSE.newJWSHeader (JOSE.RequiredProtection, JOSE.HS256)
+                -- Leave out the optional claims the source token did not have instead of
+                -- writing them as null: Kronor's graphql-engine copies a top-level "tid"
+                -- into the x-hasura-jwt-id session variable and rejects the token when it
+                -- is null ("x-hasura-* claims ... encountered Null").
+                optionalClaim name = fmap (name Aeson..=)
                 payload =
-                    Aeson.object
-                        [ "https://hasura.io/jwt/claims" Aeson..= hasuraClaims
-                        , "iat" Aeson..= issuedAt
+                    Aeson.object $
+                        [ "iat" Aeson..= issuedAt
                         , "exp" Aeson..= (issuedAt + (3600 :: Int))
-                        , "tid" Aeson..= tokenId
-                        , "ttype" Aeson..= tokenType
-                        , "tname" Aeson..= (Nothing :: Maybe Text)
-                        , "associated_email" Aeson..= associatedEmail
                         ]
+                            <> catMaybes
+                                [ optionalClaim "https://hasura.io/jwt/claims" hasuraClaims
+                                , optionalClaim "tid" tokenId
+                                , optionalClaim "ttype" tokenType
+                                , optionalClaim "associated_email" associatedEmail
+                                ]
             result <- JOSE.runJOSE @JOSE.Error do
                 jws <- JOSE.signJWS (Aeson.encode payload) (Identity (header, jwk)) :: JOSE.JOSE JOSE.Error IO (JOSE.CompactJWS JOSE.JWSHeader)
                 pure (JOSE.encodeCompact jws)
