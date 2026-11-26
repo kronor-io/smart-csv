@@ -145,7 +145,7 @@ The service reads configuration from environment variables. See `_dev/smart-csv-
 
 ## Releases
 
-Images are published for tags only: `v*` tags (commits on `main` only) push a version and `:latest`, `kronor-rc-*` tags push a pre-release under its own tag. See [docs/releases.md](docs/releases.md) for what a version may change.
+Images are published for tags only: `v*` tags (commits on `main` only) push a version and `:latest`, `rc-*` tags push a pre-release under its own tag. See [docs/releases.md](docs/releases.md) for what a version may change.
 
 ## License
 

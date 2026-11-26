@@ -6,7 +6,7 @@
 | Tag | Image tags pushed | Allowed on |
 |-----|-------------------|------------|
 | `v1.2.3` | `1.2.3` and `latest` | a commit on `main` only; the release job fails otherwise |
-| `kronor-rc-<anything>` | `kronor-rc-<anything>` only | any commit, typically on the `kronor` branch |
+| `rc-<anything>` | `rc-<anything>` only | any commit, typically on the `kronor` branch |
 
 ## Why `v*` tags are restricted
 
@@ -25,7 +25,7 @@ the change has been agreed with them first. In practice, for anything tagged:
 
 Kronor uses the `smart-csv` library from a long-lived `kronor` branch, pinned by commit, while the
 shared export engine is built and proven there. CI runs for pushes and pull requests on it. It
-never produces a version: its images are `kronor-rc-*` pre-releases, for trying a build in staging.
+never produces a version: its images are `rc-*` pre-releases, for trying a build in staging.
 
 - `main` is merged into `kronor` weekly, and whenever the export loop changes on `main`.
 - Changes that leave the runner's behaviour unchanged go to `main` first.
