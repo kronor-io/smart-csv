@@ -113,6 +113,21 @@ direnv exec . cabal test all
 
 The integration tests create temporary tables in Hasura, insert test data, call the REST API, wait for the worker to generate a CSV, download it from S3, verify the contents, and clean up.
 
+### The library with Kronor's versions
+
+Kronor uses the `smart-csv` library with its own dependency versions (for example morpheus-graphql-core 0.28 and aeson 2.3 with `+ordered-keymap`), while the runner builds with `cabal.project.freeze`. The library's version bounds allow both, and the CI job "Library with Kronor's versions" builds and tests it with Kronor's:
+
+```bash
+cabal test --project-file=cabal.project.kronor all   # needs Kronor's GHC (see with-compiler)
+```
+
+`cabal.project.kronor` and its freeze file hold only the packages the library uses, at Kronor's versions. When Kronor upgrades a dependency or GHC, regenerate them from Kronor's dev shell:
+
+```bash
+git -C <kronor checkout> fetch origin
+_dev/sync-kronor-versions.sh <kronor checkout>   # reads origin/master; pass another ref as the second argument
+```
+
 ## API
 
 ### `GET /health`
