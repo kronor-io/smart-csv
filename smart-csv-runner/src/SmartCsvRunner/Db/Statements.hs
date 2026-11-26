@@ -1,4 +1,4 @@
-module Kronor.SmartCsv.Statements (
+module SmartCsvRunner.Db.Statements (
     GeneratedCsvPayload (..),
     insertSmartGraphqlCsvGenerator,
     selectGeneratedCsvPayload,
