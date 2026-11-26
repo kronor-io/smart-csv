@@ -19,6 +19,10 @@ A column config is a JSON object where:
     When the *top-level field* is an array every element is processed and the results
     are joined with `, `. When an intermediate step in the path encounters an array,
     only the **first element** is followed.
+  - `columns` — print the field as several columns instead of one. A non-empty list
+    of objects, each with its own `header`, `dataPath` and `decimalPlaces`, written in
+    list order where the field is selected. See [Several columns from one
+    field](#several-columns-from-one-field).
 
 Fields not mentioned in the config are included with their raw field name as the
 header.
@@ -69,6 +73,38 @@ you need `dataPath` to disambiguate which value should be written.
 Likewise, if `attempts` returns an array like
 `[{ "payment": { "cardType": "VISA" } }, { "payment": { "cardType": "MASTERCARD" } }]`,
 the CSV value becomes `VISA,MASTERCARD` when using `dataPath: "payment.cardType"`.
+
+### Several columns from one field
+
+A field normally gives one column, so an object with several values you need, such
+as a customer's name and email, would need the object selected twice under two
+aliases. Instead, list the columns it should print:
+
+```json
+{
+  "customer": {
+    "columns": [
+      { "header": "Customer Name", "dataPath": "name" },
+      { "header": "Customer Email", "dataPath": "email" },
+      { "header": "Balance", "dataPath": "account.balance", "decimalPlaces": 2 }
+    ]
+  }
+}
+```
+
+With `customer { name email account { balance } }` selected, this writes three
+columns in that order, where `customer` is in the query.
+
+- Each entry prints exactly what a field of its own with the same `header`,
+  `dataPath` and `decimalPlaces` would, in CSV and in Excel. When the field is an
+  array, each entry joins its values from every element with `, `.
+- An entry without `header` is headed by the field and its data path, for example
+  `customer.email`.
+- With `columns`, the field's own `header`, `dataPath` and `decimalPlaces` are not
+  used.
+- An empty `columns` list makes the whole entry invalid, so the field prints as if
+  it had no config.
+- `detectNumericColumns` checks each entry on its own.
 
 ## Inline Config
 

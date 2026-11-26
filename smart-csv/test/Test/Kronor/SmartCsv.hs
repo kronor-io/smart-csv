@@ -3,18 +3,19 @@ module Test.Kronor.SmartCsv (main) where
 import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Char8 qualified as ByteString.Char8
+import Data.List.NonEmpty (nonEmpty)
 import Data.Map.Strict qualified as Map
 import Data.Morpheus.Core (parseRequest)
 import Data.Morpheus.Internal.Ext (Result (..))
 import Data.Morpheus.Types.IO (GQLRequest (..))
 import Data.Morpheus.Types.Internal.AST (ExecutableDocument (..), Operation (..), RAW, Selection)
 import Data.Vector qualified as Vector
-import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnSettings (..), parseColumnConfig)
+import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnSettings (..), defaultColumnSettings, parseColumnConfig)
 import Kronor.SmartCsv.ErrorHandling (ErrorAction (..), classifyCursorError, classifyHttpStatusError, classifyJsonDecodeError, classifyResponseError, classifyTokenClaimsError)
 import Kronor.SmartCsv.Flatten (csvify, gatherSelectionNames)
 import Kronor.SmartCsv.Notification (CompletionEmail (..), EnqueueMeta (..), defaultEnqueueMeta, mkCompletionEmail)
 import Kronor.SmartCsv.Pagination (CursorError (..), PaginationCursor (..), PaginationDirection (..), PaginationField (..), extractCursor, extractCursorValue, inferHeaders)
-import Kronor.SmartCsv.Schema (SchemaTypes (..), introspectionRequestBody, markNumericColumns, numericColumns, parseIntrospectionResponse)
+import Kronor.SmartCsv.Schema (NumericColumn (..), SchemaTypes (..), introspectionRequestBody, markNumericColumns, numericColumns, parseIntrospectionResponse)
 import Kronor.SmartCsv.Query (DecodedResponsePage (..), GenericQuery (..), ResponseError (..), buildRequestBody, decodeResponseChunk, decodeResponsePage, decodeResponseRows, decodedResponsePageBytes, resolvePaginationFields, resolvePaginationKey)
 import Kronor.SmartCsv.TokenClaims (HasuraRoleError (..), ParsedTokenClaims (..), TokenClaimsError (..), parseTokenClaims, selectHasuraRole)
 import Kronor.SmartCsv.Validation qualified as SmartCsvValidation
@@ -90,12 +91,20 @@ tests =
       testCase "csvify applies custom decimal places with comma decimals" testCsvifyCustomDecimalPlaces,
       testCase "csvify uses comma decimals when decimalPlaces is unset" testCsvifyNumericPreservesOriginal,
       testCase "csvify uses comma decimals for a numeric column sent as a string" testCsvifyNumericStringColumn,
+      testCase "parseColumnConfig reads the entries of columns" testParseColumnConfigColumns,
+      testCase "parseColumnConfig leaves out an entry whose columns is empty" testParseColumnConfigEmptyColumns,
+      testCase "csvify prints a field with columns as one column per entry" testCsvifyColumns,
+      testCase "csvify prints each entry of columns like a column of its own" testCsvifyColumnsLikeOwnColumns,
+      testCase "csvify applies columns to every element of an array" testCsvifyColumnsArray,
       testCase "introspectionRequestBody is a valid GraphQL query" testIntrospectionRequestBodyParses,
       testCase "parseIntrospectionResponse keeps the named type of each field" testParseIntrospectionResponse,
       testCase "numericColumns finds the columns that print a numeric scalar" testNumericColumns,
       testCase "markNumericColumns flags configured and unconfigured columns" testMarkNumericColumns,
+      testCase "numericColumns checks each entry of columns on its own" testNumericColumnsEntries,
+      testCase "markNumericColumns flags one entry of columns" testMarkNumericColumnsEntry,
       testCase "inferHeaders with empty config returns alias ids" testInferHeadersPassThrough,
       testCase "inferHeaders with custom config renames aliased columns" testInferHeadersCustomConfig,
+      testCase "inferHeaders puts the entries of columns in the field's place" testInferHeadersColumns,
       testCase "extractCursor returns error when pagination field is not selected" testExtractCursorMissingSelection,
       testCase "extractCursor supports nested pagination fields" testExtractCursorNestedField,
       testCase "decodeResponseRows with empty config uses alias ids" testDecodeResponseRowsPassThrough,
@@ -638,17 +647,17 @@ parseRootSelection q =
 columnConfig :: ColumnConfig
 columnConfig =
   Map.fromList
-    [ ("payment_request_id", ColumnSettings Nothing (Just "Payment Request ID") Nothing False),
-      ("transaction_id", ColumnSettings Nothing (Just "Transaction ID") Nothing False),
-      ("merchant_id", ColumnSettings Nothing (Just "Merchant ID") Nothing False),
-      ("placed_at", ColumnSettings Nothing (Just "Placed At") Nothing False),
-      ("reference", ColumnSettings Nothing (Just "Reference") Nothing False),
-      ("payment_method", ColumnSettings Nothing (Just "Payment Method") Nothing False),
-      ("attempts", ColumnSettings Nothing (Just "Card Type") (Just "payment.cardType") False),
-      ("customer", ColumnSettings Nothing (Just "Customer Email") (Just "profile.email") False),
-      ("latest_status", ColumnSettings Nothing (Just "Latest Status") Nothing False),
-      ("currency", ColumnSettings Nothing (Just "Currency") Nothing False),
-      ("amount", ColumnSettings Nothing (Just "Amount") Nothing False)
+    [ ("payment_request_id", ColumnSettings Nothing (Just "Payment Request ID") Nothing False Nothing),
+      ("transaction_id", ColumnSettings Nothing (Just "Transaction ID") Nothing False Nothing),
+      ("merchant_id", ColumnSettings Nothing (Just "Merchant ID") Nothing False Nothing),
+      ("placed_at", ColumnSettings Nothing (Just "Placed At") Nothing False Nothing),
+      ("reference", ColumnSettings Nothing (Just "Reference") Nothing False Nothing),
+      ("payment_method", ColumnSettings Nothing (Just "Payment Method") Nothing False Nothing),
+      ("attempts", ColumnSettings Nothing (Just "Card Type") (Just "payment.cardType") False Nothing),
+      ("customer", ColumnSettings Nothing (Just "Customer Email") (Just "profile.email") False Nothing),
+      ("latest_status", ColumnSettings Nothing (Just "Latest Status") Nothing False Nothing),
+      ("currency", ColumnSettings Nothing (Just "Currency") Nothing False Nothing),
+      ("amount", ColumnSettings Nothing (Just "Amount") Nothing False Nothing)
     ]
 
 gqlQueryText :: Text
@@ -822,8 +831,8 @@ testParseColumnConfig = do
           ]
   parseColumnConfig json
     @?= Map.fromList
-      [ ("field_a", ColumnSettings (Just 3) (Just "Column A") (Just "customer.email") False),
-        ("field_b", ColumnSettings Nothing Nothing Nothing False)
+      [ ("field_a", ColumnSettings (Just 3) (Just "Column A") (Just "customer.email") False Nothing),
+        ("field_b", ColumnSettings Nothing Nothing Nothing False Nothing)
       ]
   parseColumnConfig Aeson.Null @?= Map.empty
 
@@ -852,8 +861,8 @@ testCsvifyArrayValues :: IO ()
 testCsvifyArrayValues = do
   let config =
         Map.fromList
-          [ ("amounts", ColumnSettings (Just 1) (Just "Amounts") Nothing False),
-            ("attempts", ColumnSettings Nothing (Just "Card Types") (Just "payment.cardType") False)
+          [ ("amounts", ColumnSettings (Just 1) (Just "Amounts") Nothing False Nothing),
+            ("attempts", ColumnSettings Nothing (Just "Card Types") (Just "payment.cardType") False Nothing)
           ]
       row =
         Aeson.object
@@ -875,8 +884,8 @@ testCsvifyArrayIgnoresNulls :: IO ()
 testCsvifyArrayIgnoresNulls = do
   let config =
         Map.fromList
-          [ ("amounts", ColumnSettings (Just 1) (Just "Amounts") Nothing False),
-            ("attempts", ColumnSettings Nothing (Just "Card Types") (Just "payment.cardType") False)
+          [ ("amounts", ColumnSettings (Just 1) (Just "Amounts") Nothing False Nothing),
+            ("attempts", ColumnSettings Nothing (Just "Card Types") (Just "payment.cardType") False Nothing)
           ]
       row =
         Aeson.object
@@ -900,7 +909,7 @@ testCsvifyArrayObjectNullFields :: IO ()
 testCsvifyArrayObjectNullFields = do
   let config =
         Map.fromList
-          [("attempts", ColumnSettings Nothing (Just "Card Types") (Just "payment.cardType") False)]
+          [("attempts", ColumnSettings Nothing (Just "Card Types") (Just "payment.cardType") False Nothing)]
       row =
         Aeson.object
           [ ( "attempts",
@@ -920,8 +929,8 @@ testCsvifyCustomDecimalPlaces :: IO ()
 testCsvifyCustomDecimalPlaces = do
   let config =
         Map.fromList
-          [ ("amount", ColumnSettings (Just 3) (Just "Amount") Nothing False),
-            ("exchange_rate", ColumnSettings (Just 4) (Just "Rate") Nothing False)
+          [ ("amount", ColumnSettings (Just 3) (Just "Amount") Nothing False Nothing),
+            ("exchange_rate", ColumnSettings (Just 4) (Just "Rate") Nothing False Nothing)
           ]
       row =
         Aeson.object
@@ -932,13 +941,132 @@ testCsvifyCustomDecimalPlaces = do
   Map.lookup "Amount" result @?= Just "12,345"
   Map.lookup "Rate" result @?= Just "1,2345"
 
+-- | An entry of @columns@: header, data path, decimal places.
+columnEntry :: Maybe Text -> Text -> Maybe Int -> ColumnSettings
+columnEntry header dataPath decimals = ColumnSettings decimals header (Just dataPath) False Nothing
+
+-- | A field printed as the given entries.
+fieldWithColumns :: [ColumnSettings] -> ColumnSettings
+fieldWithColumns entries = defaultColumnSettings {columns = nonEmpty entries}
+
+testParseColumnConfigColumns :: IO ()
+testParseColumnConfigColumns = do
+  let json =
+        Aeson.object
+          [ ( "customer",
+              Aeson.object
+                [ ("header", "ignored"),
+                  ( "columns",
+                    Aeson.toJSON
+                      [ Aeson.object [("header", "Customer Name"), ("dataPath", "name")],
+                        Aeson.object [("dataPath", "balance"), ("decimalPlaces", Aeson.Number 2)]
+                      ]
+                  )
+                ]
+            )
+          ]
+  parseColumnConfig json
+    @?= Map.fromList
+      [ ( "customer",
+          (fieldWithColumns [columnEntry (Just "Customer Name") "name" Nothing, columnEntry Nothing "balance" (Just 2)])
+            { header = Just "ignored"
+            }
+        )
+      ]
+
+testParseColumnConfigEmptyColumns :: IO ()
+testParseColumnConfigEmptyColumns = do
+  let json =
+        Aeson.object
+          [ ("customer", Aeson.object [("columns", Aeson.toJSON ([] :: [Aeson.Value]))]),
+            ("amount", Aeson.object [("header", "Amount")])
+          ]
+  parseColumnConfig json @?= Map.fromList [("amount", defaultColumnSettings {header = Just "Amount"})]
+
+testCsvifyColumns :: IO ()
+testCsvifyColumns = do
+  let config =
+        Map.fromList
+          [ ( "customer",
+              fieldWithColumns
+                [ columnEntry (Just "Customer Name") "name" Nothing,
+                  columnEntry Nothing "email" Nothing,
+                  columnEntry (Just "Balance") "account.balance" (Just 2)
+                ]
+            )
+          ]
+      row =
+        Aeson.object
+          [ ( "customer",
+              Aeson.object
+                [ ("name", "Ada"),
+                  ("email", "ada@example.com"),
+                  ("account", Aeson.object [("balance", Aeson.Number 12.345)])
+                ]
+            ),
+            ("amount", Aeson.Number 10)
+          ]
+  csvify config "orders" row
+    @?= Map.fromList
+      [ ("Customer Name", "Ada"),
+        -- An entry without a header is headed by the field and its data path.
+        ("customer.email", "ada@example.com"),
+        ("Balance", "12,34"),
+        ("amount", "10")
+      ]
+
+-- | An entry of @columns@ prints exactly what a field of its own with the same
+-- settings would.
+testCsvifyColumnsLikeOwnColumns :: IO ()
+testCsvifyColumnsLikeOwnColumns = do
+  let customer =
+        Aeson.object
+          [ ("name", "Ada"),
+            ("balance", Aeson.String "1234.5678"),
+            ("tags", Aeson.toJSON ["a", "b" :: Text])
+          ]
+      fanOut =
+        Map.fromList
+          [ ( "customer",
+              fieldWithColumns
+                [ columnEntry (Just "Name") "name" Nothing,
+                  columnEntry (Just "Balance") "balance" (Just 3),
+                  columnEntry (Just "Tags") "tags" Nothing
+                ]
+            )
+          ]
+      separate =
+        Map.fromList
+          [ ("name", ColumnSettings Nothing (Just "Name") (Just "name") False Nothing),
+            ("balance", ColumnSettings (Just 3) (Just "Balance") (Just "balance") False Nothing),
+            ("tags", ColumnSettings Nothing (Just "Tags") (Just "tags") False Nothing)
+          ]
+  csvify fanOut "orders" (Aeson.object [("customer", customer)])
+    @?= csvify separate "orders" (Aeson.object [("name", customer), ("balance", customer), ("tags", customer)])
+
+testCsvifyColumnsArray :: IO ()
+testCsvifyColumnsArray = do
+  let config =
+        Map.fromList
+          [ ( "attempts",
+              fieldWithColumns
+                [ columnEntry (Just "Card Type") "cardType" Nothing,
+                  columnEntry (Just "Card Country") "cardCountry" Nothing
+                ]
+            )
+          ]
+      attempt cardType country = Aeson.object [("cardType", cardType), ("cardCountry", country)]
+      row = Aeson.object [("attempts", Aeson.toJSON [attempt "VISA" "SE", attempt "MC" Aeson.Null])]
+  csvify config "transactions" row
+    @?= Map.fromList [("Card Type", "VISA, MC"), ("Card Country", "SE")]
+
 testCsvifyNumericPreservesOriginal :: IO ()
 testCsvifyNumericPreservesOriginal = do
   let config =
         Map.fromList
-          [ ("price", ColumnSettings Nothing (Just "Price") Nothing False),
-            ("quantity", ColumnSettings Nothing (Just "Quantity") Nothing False),
-            ("discount", ColumnSettings Nothing (Just "Discount") Nothing False)
+          [ ("price", ColumnSettings Nothing (Just "Price") Nothing False Nothing),
+            ("quantity", ColumnSettings Nothing (Just "Quantity") Nothing False Nothing),
+            ("discount", ColumnSettings Nothing (Just "Discount") Nothing False Nothing)
           ]
       row =
         Aeson.object
@@ -965,10 +1093,10 @@ testInferHeadersCustomConfig :: IO ()
 testInferHeadersCustomConfig = do
   let config =
         Map.fromList
-          [ ("payment_request_id", ColumnSettings Nothing (Just "Order ID") Nothing False),
-            ("placed_at", ColumnSettings Nothing (Just "Placed At") Nothing False),
-            ("customer", ColumnSettings Nothing (Just "Customer Email") (Just "profile.email") False),
-            ("attempts", ColumnSettings Nothing (Just "Card Type") (Just "payment.cardType") False)
+          [ ("payment_request_id", ColumnSettings Nothing (Just "Order ID") Nothing False Nothing),
+            ("placed_at", ColumnSettings Nothing (Just "Placed At") Nothing False Nothing),
+            ("customer", ColumnSettings Nothing (Just "Customer Email") (Just "profile.email") False Nothing),
+            ("attempts", ColumnSettings Nothing (Just "Card Type") (Just "payment.cardType") False Nothing)
           ]
   root <- parseRootSelection gqlQueryText
   inferHeaders config root
@@ -977,6 +1105,26 @@ testInferHeadersCustomConfig = do
           "Customer Email",
           "Card Type"
         ]
+
+testInferHeadersColumns :: IO ()
+testInferHeadersColumns = do
+  root <-
+    parseRootSelection
+      "query ($rowLimit: Int!, $paginationCondition: payment_requests_bool_exp!) { \
+      \  paymentRequests(limit: $rowLimit, where: $paginationCondition) { \
+      \    waitToken \
+      \    customer { name email } \
+      \    amount \
+      \  } \
+      \}"
+  let config =
+        Map.fromList
+          [ ( "customer",
+              fieldWithColumns [columnEntry (Just "Customer Name") "name" Nothing, columnEntry Nothing "email" Nothing]
+            ),
+            ("amount", defaultColumnSettings {header = Just "Amount"})
+          ]
+  inferHeaders config root @?= ["waitToken", "Customer Name", "customer.email", "Amount"]
 
 testExtractCursorMissingSelection :: IO ()
 testExtractCursorMissingSelection = do
@@ -1019,9 +1167,9 @@ testCsvifyNumericStringColumn :: IO ()
 testCsvifyNumericStringColumn = do
   let config =
         Map.fromList
-          [ ("amount", ColumnSettings Nothing (Just "Amount") Nothing True),
-            ("rate", ColumnSettings (Just 2) (Just "Rate") Nothing True),
-            ("reference", ColumnSettings Nothing (Just "Reference") Nothing False)
+          [ ("amount", ColumnSettings Nothing (Just "Amount") Nothing True Nothing),
+            ("rate", ColumnSettings (Just 2) (Just "Rate") Nothing True Nothing),
+            ("reference", ColumnSettings Nothing (Just "Reference") Nothing False Nothing)
           ]
       row =
         Aeson.object
@@ -1123,16 +1271,43 @@ testNumericColumns = do
       \}"
   let config =
         Map.fromList
-          [ ("lineAmounts", ColumnSettings Nothing Nothing (Just "amount") False),
-            ("lineMemos", ColumnSettings Nothing Nothing (Just "memo") False)
+          [ ("lineAmounts", ColumnSettings Nothing Nothing (Just "amount") False Nothing),
+            ("lineMemos", ColumnSettings Nothing Nothing (Just "memo") False Nothing)
           ]
-  numericColumns schema config root @?= Set.fromList ["totalAmount", "rate", "subsidiaryVat", "lineAmounts"]
+  numericColumns schema config root @?= Set.fromList (NumericField <$> ["totalAmount", "rate", "subsidiaryVat", "lineAmounts"])
 
 testMarkNumericColumns :: IO ()
 testMarkNumericColumns = do
-  let config = Map.fromList [("amount", ColumnSettings (Just 2) (Just "Amount") Nothing False)]
-  markNumericColumns (Set.fromList ["amount", "rate"]) config
+  let config = Map.fromList [("amount", ColumnSettings (Just 2) (Just "Amount") Nothing False Nothing)]
+  markNumericColumns (Set.fromList [NumericField "amount", NumericField "rate"]) config
     @?= Map.fromList
-      [ ("amount", ColumnSettings (Just 2) (Just "Amount") Nothing True),
-        ("rate", ColumnSettings Nothing Nothing Nothing True)
+      [ ("amount", ColumnSettings (Just 2) (Just "Amount") Nothing True Nothing),
+        ("rate", ColumnSettings Nothing Nothing Nothing True Nothing)
       ]
+
+testNumericColumnsEntries :: IO ()
+testNumericColumnsEntries = do
+  schema <- parsedSchema
+  root <-
+    parseRootSelection
+      "query ($rowLimit: Int!, $paginationCondition: Journal_bool_exp!) { \
+      \  Journal(limit: $rowLimit, where: $paginationCondition) { \
+      \    subsidiary { name vatRate } \
+      \    journalLines { amount memo } \
+      \  } \
+      \}"
+  let config =
+        Map.fromList
+          [ ("subsidiary", fieldWithColumns [columnEntry Nothing "name" Nothing, columnEntry Nothing "vatRate" Nothing]),
+            ("journalLines", fieldWithColumns [columnEntry Nothing "amount" Nothing, columnEntry Nothing "memo" Nothing])
+          ]
+  numericColumns schema config root
+    @?= Set.fromList [NumericEntry "subsidiary" 1, NumericEntry "journalLines" 0]
+
+testMarkNumericColumnsEntry :: IO ()
+testMarkNumericColumnsEntry = do
+  let name = columnEntry Nothing "name" Nothing
+      vatRate = columnEntry Nothing "vatRate" Nothing
+      config = Map.fromList [("subsidiary", fieldWithColumns [name, vatRate])]
+  markNumericColumns (Set.fromList [NumericEntry "subsidiary" 1]) config
+    @?= Map.fromList [("subsidiary", fieldWithColumns [name, vatRate {numeric = True}])]

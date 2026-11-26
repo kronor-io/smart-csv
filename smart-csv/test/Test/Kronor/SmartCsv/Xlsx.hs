@@ -9,7 +9,7 @@ import Data.ByteString.Lazy qualified as LByteString
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as Text
 import Data.Vector qualified as Vector
-import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnSettings (..))
+import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnSettings (..), defaultColumnSettings)
 import Kronor.SmartCsv.Deflate (SegmentEnd (..), crc32, deflateSegment)
 import Kronor.SmartCsv.Xlsx (SheetEntry (..), XlsxCell (..), appendRows, finishArchive, mkXlsxStyles, sheetNameFor, startArchive, xlsxRowBytes, xlsxify)
 import RIO
@@ -29,6 +29,7 @@ tests =
       testCase "xlsxify truncates to negative decimal places like csvify" testXlsxifyNegativeDecimalPlaces,
       testCase "xlsxify follows data paths and joins arrays like csvify" testXlsxifyPathsAndArrays,
       testCase "xlsxify keeps decimal places of numbers joined from an array" testXlsxifyNumberArrays,
+      testCase "xlsxify prints each entry of columns like a column of its own" testXlsxifyColumns,
       testCase "xlsxRowBytes writes every cell so empty ones keep their column" testRowBytes,
       testCase "xlsxRowBytes escapes markup and characters XML cannot hold" testEscaping,
       testCase "sheetNameFor makes a valid sheet name" testSheetName,
@@ -94,7 +95,7 @@ testXlsxifyPrecision = do
 
 testXlsxifyManyDecimalPlaces :: IO ()
 testXlsxifyManyDecimalPlaces = do
-  let config = Map.fromList [("tiny", ColumnSettings (Just 31) Nothing Nothing False)]
+  let config = Map.fromList [("tiny", ColumnSettings (Just 31) Nothing Nothing False Nothing)]
       row = Aeson.object [("tiny", Aeson.Number 1.9e-31)]
   -- The value keeps the 31 places it was truncated to, as in the CSV file; an
   -- Excel number format shows at most 30, so the cell is text.
@@ -104,7 +105,7 @@ testXlsxifyManyDecimalPlaces = do
 
 testXlsxifyNegativeDecimalPlaces :: IO ()
 testXlsxifyNegativeDecimalPlaces = do
-  let config = Map.fromList [("rounded", ColumnSettings (Just (-2)) Nothing Nothing False)]
+  let config = Map.fromList [("rounded", ColumnSettings (Just (-2)) Nothing Nothing False Nothing)]
   xlsxify config (Aeson.object [("rounded", Aeson.Number 1234.5)])
     @?= Map.fromList [("rounded", CellNumber "1200" (Just 0))]
 
@@ -112,8 +113,8 @@ testXlsxifyPathsAndArrays :: IO ()
 testXlsxifyPathsAndArrays = do
   let config =
         Map.fromList
-          [ ("attempts", ColumnSettings Nothing (Just "Card Type") (Just "payment.cardType") False),
-            ("customer", ColumnSettings Nothing (Just "Customer Email") (Just "profile.email") False)
+          [ ("attempts", ColumnSettings Nothing (Just "Card Type") (Just "payment.cardType") False Nothing),
+            ("customer", ColumnSettings Nothing (Just "Customer Email") (Just "profile.email") False Nothing)
           ]
       attempt cardType = Aeson.object [("payment", Aeson.object [("cardType", cardType)])]
       row =
@@ -129,12 +130,47 @@ testXlsxifyPathsAndArrays = do
         ("tags", CellEmpty)
       ]
 
+-- | An entry of @columns@ gives the same cell, and the same number style, as a
+-- field of its own with the same settings.
+testXlsxifyColumns :: IO ()
+testXlsxifyColumns = do
+  let customer =
+        Aeson.object
+          [ ("name", "Ada"),
+            ("balance", Aeson.String "1234.5678"),
+            ("tags", Aeson.toJSON ["a", "b" :: Text])
+          ]
+      entry header dataPath decimals = ColumnSettings decimals (Just header) (Just dataPath) False Nothing
+      fanOut =
+        Map.fromList
+          [ ( "customer",
+              defaultColumnSettings
+                { columns = Just (entry "Name" "name" Nothing :| [entry "Balance" "balance" (Just 2), entry "Tags" "tags" Nothing])
+                }
+            )
+          ]
+      separate =
+        Map.fromList
+          [ ("name", entry "Name" "name" Nothing),
+            ("balance", entry "Balance" "balance" (Just 2)),
+            ("tags", entry "Tags" "tags" Nothing)
+          ]
+      headers = Vector.fromList ["Name", "Balance", "Tags"]
+      fanOutRow = Aeson.object [("customer", customer)]
+      separateRow = Aeson.object [("name", customer), ("balance", customer), ("tags", customer)]
+  -- An array met along a data path resolves through its first element, as it
+  -- does for any column; only a field that is itself an array is joined.
+  xlsxify fanOut fanOutRow
+    @?= Map.fromList [("Name", CellText "Ada"), ("Balance", CellNumber "1234.56" (Just 2)), ("Tags", CellText "a")]
+  xlsxRowBytes fanOut (mkXlsxStyles fanOut) headers fanOutRow
+    @?= xlsxRowBytes separate (mkXlsxStyles separate) headers separateRow
+
 testXlsxifyNumberArrays :: IO ()
 testXlsxifyNumberArrays = do
   let config =
         Map.fromList
-          [ ("amounts", ColumnSettings (Just 2) Nothing Nothing False),
-            ("rates", ColumnSettings Nothing Nothing Nothing True)
+          [ ("amounts", ColumnSettings (Just 2) Nothing Nothing False Nothing),
+            ("rates", ColumnSettings Nothing Nothing Nothing True Nothing)
           ]
       numbers = Aeson.Array . Vector.fromList
       row =
@@ -211,8 +247,8 @@ testArchiveRoundTrip = do
 numberConfig :: ColumnConfig
 numberConfig =
   Map.fromList
-    [ ("amount", ColumnSettings (Just 2) (Just "Amount") Nothing False),
-      ("rate", ColumnSettings Nothing Nothing Nothing True)
+    [ ("amount", ColumnSettings (Just 2) (Just "Amount") Nothing False Nothing),
+      ("rate", ColumnSettings Nothing Nothing Nothing True Nothing)
     ]
 
 -- | Bytes that deflate barely compresses.

@@ -21,7 +21,7 @@ import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
 import Data.Scientific (FPFormat (Fixed), floatingOrInteger, formatScientific)
 import Data.Morpheus.Types.Internal.AST (RAW, Selection (..), SelectionContent (..), unpackName)
-import Kronor.SmartCsv.ColumnConfig (ColumnConfig, columnHeader)
+import Kronor.SmartCsv.ColumnConfig (ColumnConfig, OutputColumn (..), columnHeader, outputColumns)
 import Kronor.SmartCsv.Flatten (gatherSelectionNames, selectionOutputName)
 import RIO
 import RIO.Text qualified as Text
@@ -45,9 +45,14 @@ newtype PaginationCursor = PaginationCursor
   }
   deriving stock (Eq, Show)
 
+-- | The file's headers, in query order: each selected field's columns, one or
+-- one per entry of its config's @columns@.
 inferHeaders :: ColumnConfig -> Selection RAW -> [Text]
 inferHeaders colConfig rootSelection =
-  map (`columnHeader` colConfig) (gatherSelectionNames rootSelection)
+  [ column.header
+  | columnId <- gatherSelectionNames rootSelection,
+    column <- toList (outputColumns colConfig columnId)
+  ]
 
 extractCursor :: ColumnConfig -> Selection RAW -> NonEmpty PaginationField -> Map Text Csv.Field -> Either CursorError PaginationCursor
 extractCursor colConfig rootSelection paginationFields row = do

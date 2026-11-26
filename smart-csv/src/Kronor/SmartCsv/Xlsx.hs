@@ -40,7 +40,7 @@ import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Text
 import Data.Text.Unsafe qualified as Text.Unsafe
-import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnSettings (..), columnDataPath, columnDecimalPlaces, columnHeader, columnIsNumeric)
+import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnSettings (..), OutputColumn (..), outputColumns)
 import Kronor.SmartCsv.Deflate (SegmentEnd (..), crc32, deflateSegment)
 import Kronor.SmartCsv.Flatten (resolveValue)
 import Numeric (showHex)
@@ -74,39 +74,40 @@ xlsxify :: ColumnConfig -> Aeson.Value -> Map Text XlsxCell
 xlsxify colConfig (Aeson.Object obj) =
   -- The first column wins when two share a header, as in 'csvify'.
   Map.fromListWith (\_ firstCell -> firstCell)
-    $ mapMaybe extractColumn (Aeson.KeyMap.toList obj)
+    $ concatMap extractColumns (Aeson.KeyMap.toList obj)
   where
-    extractColumn (key, value) = do
-      let columnId = Aeson.Key.toText key
-      cell <- renderValue columnId (columnDataPath columnId colConfig) value
-      pure (columnHeader columnId colConfig, cell)
+    extractColumns (key, value) =
+      [ (column.header, cell)
+      | column <- toList (outputColumns colConfig (Aeson.Key.toText key)),
+        Just cell <- [renderValue column value]
+      ]
 
-    renderValue :: Text -> [Text] -> Aeson.Value -> Maybe XlsxCell
-    renderValue columnId path (Aeson.Array array) =
-      Just $ case concatMap (itemTexts columnId path) (toList array) of
+    renderValue :: OutputColumn -> Aeson.Value -> Maybe XlsxCell
+    renderValue column (Aeson.Array array) =
+      Just $ case concatMap (itemTexts column) (toList array) of
         [] -> CellEmpty
         texts -> CellText (Text.intercalate ", " texts)
-    renderValue columnId path value = leafCell <$> (resolveValue path value >>= readLeaf columnId)
+    renderValue column value = leafCell <$> (resolveValue column.dataPath value >>= readLeaf column)
 
     -- An array item as the texts it is joined from; a nested array adds its own
     -- items, as 'csvify' does.
-    itemTexts :: Text -> [Text] -> Aeson.Value -> [Text]
-    itemTexts columnId path = \case
+    itemTexts :: OutputColumn -> Aeson.Value -> [Text]
+    itemTexts column = \case
       Aeson.Null -> []
-      Aeson.Array array -> concatMap (itemTexts columnId path) (toList array)
-      value -> maybeToList (resolveValue path value >>= readLeaf columnId >>= leafText)
+      Aeson.Array array -> concatMap (itemTexts column) (toList array)
+      value -> maybeToList (resolveValue column.dataPath value >>= readLeaf column >>= leafText)
 
-    readLeaf :: Text -> Aeson.Value -> Maybe Leaf
-    readLeaf columnId = \case
+    readLeaf :: OutputColumn -> Aeson.Value -> Maybe Leaf
+    readLeaf column = \case
       Aeson.String text
-        | Just decimals <- columnDecimalPlaces columnId colConfig,
+        | Just decimals <- column.decimalPlaces,
           Just value <- readScientific text ->
             Just (LeafNumber (truncateScientific decimals value) (Just decimals) Nothing)
-        | columnIsNumeric columnId colConfig,
+        | column.numeric,
           Just value <- readScientific text ->
             Just (LeafNumber value Nothing (Just text))
         | otherwise -> Just (LeafText text)
-      Aeson.Number value -> Just $ case columnDecimalPlaces columnId colConfig of
+      Aeson.Number value -> Just $ case column.decimalPlaces of
         Just decimals -> LeafNumber (truncateScientific decimals value) (Just decimals) Nothing
         Nothing -> LeafNumber value Nothing Nothing
       Aeson.Bool flag -> Just (LeafBool flag)
@@ -197,7 +198,9 @@ mkXlsxStyles colConfig =
   where
     -- Negative decimal places truncate to tens, hundreds, ... and show none, as in
     -- CSV; more than Excel can show leave the cells as text (see 'leafCell').
-    decimalsUsed = Set.toAscList (Set.fromList (filter (<= excelMaxDecimalPlaces) (mapMaybe (fmap (max 0) . (.decimalPlaces)) (Map.elems colConfig))))
+    decimalsUsed = Set.toAscList (Set.fromList (filter (<= excelMaxDecimalPlaces) (mapMaybe (fmap (max 0)) (concatMap columnDecimals (Map.elems colConfig)))))
+    -- A field's own decimal places, and those of the entries of its @columns@.
+    columnDecimals settings = settings.decimalPlaces : maybe [] (map (.decimalPlaces) . toList) settings.columns
     formats = zip [164 :: Int ..] decimalsUsed
     formatCode decimals = "#,##0" <> (if decimals == 0 then "" else "." <> Builder.string7 (replicate decimals '0'))
     xml =

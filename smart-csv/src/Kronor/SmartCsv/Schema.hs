@@ -1,5 +1,6 @@
 module Kronor.SmartCsv.Schema
   ( SchemaTypes (..),
+    NumericColumn (..),
     introspectionRequestBody,
     parseIntrospectionResponse,
     numericColumns,
@@ -9,10 +10,11 @@ where
 
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Types qualified as Aeson.Types
+import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
 import Data.Morpheus.Types.Internal.AST (RAW, Selection (..), SelectionContent (..), unpackName)
 import Data.Set qualified as Set
-import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnSettings (..), columnDataPath)
+import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnSettings (..), OutputColumn (..), defaultColumnSettings, outputColumns)
 import Kronor.SmartCsv.Flatten (selectionOutputName)
 import RIO
 import RIO.List (find)
@@ -70,22 +72,36 @@ parseIntrospectionResponse = Aeson.Types.parseEither \value -> do
         Just name -> pure name
         Nothing -> typeObj Aeson..: "ofType" >>= parseNamedType
 
--- | Ids of the columns whose printed value is a numeric scalar.  The leaf is found
+-- | A column that prints a numeric scalar: a selected field's only column, or the
+-- entry at that index of its config's @columns@.
+data NumericColumn
+  = NumericField Text
+  | NumericEntry Text Int
+  deriving stock (Eq, Ord, Show)
+
+-- | The columns whose printed value is a numeric scalar.  The leaf is found
 -- the way 'Kronor.SmartCsv.Flatten.csvify' finds it: follow the column's dataPath,
 -- then keep descending while the selection has a single field.
-numericColumns :: SchemaTypes -> ColumnConfig -> Selection RAW -> Set Text
+numericColumns :: SchemaTypes -> ColumnConfig -> Selection RAW -> Set NumericColumn
 numericColumns schema colConfig rootSelection =
   case (rootSelection, fieldType schema.queryTypeName rootSelection) of
     (Selection {selectionContent = SelectionSet columns}, Just rowType) ->
       Set.fromList
-        [ columnId
+        [ numericColumn
         | column@Selection {} <- toList columns,
           let columnId = selectionOutputName column,
-          Just leafType <- [leafTypeOf (columnDataPath columnId colConfig) rowType column],
+          (numericColumn, output) <- withRefs columnId (outputColumns colConfig columnId),
+          Just leafType <- [leafTypeOf output.dataPath rowType column],
           leafType `Set.member` numericScalars
         ]
     _ -> mempty
   where
+    withRefs :: Text -> NonEmpty OutputColumn -> [(NumericColumn, OutputColumn)]
+    withRefs columnId outputs =
+      case Map.lookup columnId colConfig >>= (.columns) of
+        Just _ -> zip (NumericEntry columnId <$> [0 ..]) (toList outputs)
+        Nothing -> [(NumericField columnId, NonEmpty.head outputs)]
+
     fieldType :: Text -> Selection RAW -> Maybe Text
     fieldType parentType selection = do
       fields <- Map.lookup parentType schema.fieldTypes
@@ -107,11 +123,26 @@ numericColumns schema colConfig rootSelection =
     fieldSelections :: (Foldable t) => t (Selection RAW) -> [Selection RAW]
     fieldSelections children = [child | child@Selection {} <- toList children]
 
--- | Flag the given columns as numeric, adding a default entry for a column the
+-- | Flag the given columns as numeric, adding a default entry for a field the
 -- config does not mention.
-markNumericColumns :: Set Text -> ColumnConfig -> ColumnConfig
-markNumericColumns columnIds colConfig =
-  foldl' (flip (Map.alter (Just . markNumeric))) colConfig (Set.toList columnIds)
+markNumericColumns :: Set NumericColumn -> ColumnConfig -> ColumnConfig
+markNumericColumns numeric colConfig =
+  foldl' (flip mark) colConfig (Set.toList numeric)
   where
-    markNumeric mSettings =
-      (fromMaybe (ColumnSettings Nothing Nothing Nothing False) mSettings) {numeric = True}
+    mark = \case
+      NumericField columnId -> Map.alter (Just . markField) columnId
+      NumericEntry columnId index -> Map.adjust (markEntry index) columnId
+
+    markField mSettings = setNumeric (fromMaybe defaultColumnSettings mSettings)
+
+    markEntry index settings =
+      settings {columns = NonEmpty.zipWith (markAt index) (0 :| [1 ..]) <$> settings.columns}
+
+    markAt index at entry
+      | at == index = setNumeric entry
+      | otherwise = entry
+
+    -- Built field by field: OutputColumn has a 'numeric' field too, which makes a
+    -- record update ambiguous.
+    setNumeric (ColumnSettings decimals header dataPath _ columns) =
+      ColumnSettings decimals header dataPath True columns
