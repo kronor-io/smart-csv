@@ -1,0 +1,21 @@
+%syntax-version=1.0.0
+%project=finance
+
+smart_csv/schemas 2026-03-19T12:00:00Z Kronor Team <dev@kronor.io> # Create smart_csv and job_queue schemas
+smart_csv/extensions [smart_csv/schemas] 2026-03-19T12:00:01Z Kronor Team <dev@kronor.io> # Required extensions and custom domains
+smart_csv/reference_tables [smart_csv/schemas smart_csv/extensions] 2026-03-19T12:00:02Z Kronor Team <dev@kronor.io> # Reference/lookup tables
+smart_csv/job_queue_tables [smart_csv/schemas] 2026-03-19T12:00:03Z Kronor Team <dev@kronor.io> # Job queue infrastructure tables
+smart_csv/job_queue_functions [smart_csv/job_queue_tables] 2026-03-19T12:00:04Z Kronor Team <dev@kronor.io> # Job queue functions
+smart_csv/job_queue_triggers [smart_csv/job_queue_tables] 2026-03-19T12:00:05Z Kronor Team <dev@kronor.io> # Job queue notification triggers
+smart_csv/smart_csv_tables [smart_csv/schemas smart_csv/extensions smart_csv/reference_tables] 2026-03-19T12:00:06Z Kronor Team <dev@kronor.io> # Core smart_csv tables
+smart_csv/smart_csv_functions [smart_csv/smart_csv_tables smart_csv/job_queue_functions] 2026-03-19T12:00:07Z Kronor Team <dev@kronor.io> # Smart CSV functions and job schema
+smart_csv/smart_csv_statechart [smart_csv/smart_csv_tables smart_csv/smart_csv_functions] 2026-03-19T12:00:08Z Kronor Team <dev@kronor.io> # csv_report_flow state machine
+smart_csv/smart_csv_triggers [smart_csv/smart_csv_tables smart_csv/smart_csv_functions smart_csv/smart_csv_statechart] 2026-03-19T12:00:09Z Kronor Team <dev@kronor.io> # Smart CSV triggers
+smart_csv/column_config [smart_csv/smart_csv_tables] 2026-03-20T12:00:00Z Kronor Team <dev@kronor.io> # Column config presets and per-request overrides
+@2026-04-07-001 2026-04-07T12:59:23Z platform <platform@finance> # Checkpoint @2026-04-07-001
+smart_csv/job_queue_functions [smart_csv/job_queue_functions@2026-04-07-001] 2026-04-21T11:37:59Z Jose Lorenzo Rodriguez <lorenzo@kronor.io> # Remove xmin dependency from dequeue function
+smart_csv/query_range_limit [smart_csv/schemas smart_csv/extensions] 2026-05-19T12:00:00Z Kronor Team <dev@kronor.io> # Per-root query range limit overrides
+smart_csv/view/generated_csv_job [smart_csv/smart_csv_tables] 2026-06-01T10:00:00Z GitHub Copilot <copilot@local> # view: create smart_csv.generated_csv_job
+smart_csv/order_by [smart_csv/smart_csv_tables] 2026-07-03T12:00:00Z Kronor Team <dev@kronor.io> # Store per-request GraphQL orderBy for cursor pagination
+smart_csv/detect_numeric_columns [smart_csv/smart_csv_tables] 2026-10-05T12:00:00Z Alexander Gerasimov <alge.ex@boozt.com> # Opt-in numeric column detection from the GraphQL schema for smart-csv exports
+smart_csv/file_format [smart_csv/smart_csv_tables] 2026-11-17T12:30:18Z Alexander Gerasimov <alge.ex@boozt.com> # Export file format of smart-csv requests: csv or xlsx (PLT-132156)

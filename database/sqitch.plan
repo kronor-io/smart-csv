@@ -17,3 +17,5 @@ order_by 2026-07-03T12:00:00Z Kronor Team <dev@kronor.io> # Store per-request Gr
 drop_query_range_limit [query_range_limit] 2026-07-08T12:00:00Z Kronor Team <dev@kronor.io> # Drop per-root query range limit; superseded by row/time limits
 detect_numeric_columns [smart_csv_tables] 2026-10-05T12:00:00Z Alexander Gerasimov <alge.ex@boozt.com> # Opt-in numeric column detection from the GraphQL schema
 file_format [smart_csv_tables] 2026-11-09T12:00:00Z Alexander Gerasimov <alge.ex@boozt.com> # Export file format: csv or xlsx
+@v0.11.1 2026-11-26T13:13:59Z Alexander Gerasimov <alge.ex@boozt.com> # Release 0.11.1
+job_queue_functions [job_queue_functions@v0.11.1] 2026-11-26T13:14:00Z Alexander Gerasimov <alge.ex@boozt.com> # Keep the enqueue time without xmin, so track_commit_timestamp is not needed

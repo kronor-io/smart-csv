@@ -54,9 +54,16 @@ jobs:
           MATRIX_ATTR: ${{ matrix.attr }}
 
   test:
-    name: Test
+    name: Test (${{ matrix.schema }} schema)
     needs: nix-build
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # smart-csv: this repository's migrations. finance: the copy of the ones Finance
+        # has deployed (smart-csv-runner/test/finance-schema), so a change that only works
+        # on this repository's schema fails here before a release reaches Finance.
+        schema: [smart-csv, finance]
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
@@ -74,6 +81,8 @@ jobs:
         run: docker compose up -d --wait
       - name: Set up database
         run: nix develop -c bash _dev/setup-db.sh
+        env:
+          SMART_CSV_SCHEMA: ${{ matrix.schema }}
       - name: Build service
         run: nix develop -c cabal build smart-csv-runner
       - name: Start service

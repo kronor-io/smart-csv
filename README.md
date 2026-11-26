@@ -78,6 +78,16 @@ docker compose down -v && docker compose up -d
 direnv exec . bash _dev/setup-db.sh
 ```
 
+### Finance's copy of the schema
+
+Finance deploys these migrations into its own database from a copy it keeps, on its own schedule, so its `smart_csv` schema can differ from `database/`. A snapshot of that copy lives in `smart-csv-runner/test/finance-schema`, and CI runs the tests against both schemas. Set `SMART_CSV_SCHEMA=finance` to do the same locally:
+
+```bash
+SMART_CSV_SCHEMA=finance direnv exec . bash _dev/setup-db.sh
+```
+
+Refresh the snapshot from a Finance checkout with `_dev/sync-finance-schema.sh <path to finance>`; the commit it came from is recorded in `SOURCE`.
+
 ### Schemas
 
 - `smart_csv` — Application tables: `generated_csv`, `smart_graphql_csv_generator`, `report_status`, `service_mail`, `column_config`

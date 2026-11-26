@@ -2,7 +2,7 @@ services:
   postgres:
     build:
       context: docker/postgres
-    command: postgres -c track_commit_timestamp=on
+    command: postgres
     environment:
       POSTGRES_DB: smart_csv
       POSTGRES_USER: smart_csv

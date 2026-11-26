@@ -1,0 +1,1 @@
+-- Verify smart_csv:smart_csv/column_config

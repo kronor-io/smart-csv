@@ -84,7 +84,7 @@ BEGIN;
     RETURNS TABLE (id bigint, value jsonb, attempts int, time_in_queue interval, expired boolean, run_at timestamptz) AS
     $$
         WITH available AS (
-            SELECT p1.id, p1.priority, p1.value, p1.run_at, p1.enqueued_at, p1.xmin
+            SELECT p1.id, p1.priority, p1.value, p1.run_at, p1.enqueued_at
             FROM job_queue.payload AS p1
             ORDER BY priority DESC
             FOR UPDATE SKIP LOCKED
@@ -94,7 +94,9 @@ BEGIN;
             INSERT INTO job_queue.task_in_process
             SELECT
                 available.id, available.priority, available.value,
-                available.run_at, pg_xact_commit_timestamp(available.xmin)
+                -- The payload's own enqueue time: the commit timestamp of its xmin
+                -- would need track_commit_timestamp, which deployments may not have.
+                available.run_at, available.enqueued_at
             FROM available
             RETURNING task_in_process.*
         ),

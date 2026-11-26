@@ -1,0 +1,1 @@
+-- Verify smart_csv:smart_csv/reference_tables
