@@ -187,6 +187,7 @@ test-suite smart-csv-runner-test
   hs-source-dirs:   test
   other-modules:
     Paths_smart_csv_runner
+    Test.SmartCsvRunner.Golden
     Test.SmartCsvRunner.Integration
   build-depends:
       aeson
