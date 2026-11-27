@@ -97,6 +97,7 @@ library
     SmartCsvRunner.AWS.Types
     SmartCsvRunner.Cli
     SmartCsvRunner.CsvGeneration.Generate
+    SmartCsvRunner.Db.Statements
     SmartCsvRunner.Dequeuer
     SmartCsvRunner.Dispatcher
     SmartCsvRunner.Env
@@ -123,7 +124,6 @@ library
     , bytestring
     , cassava
     , co-log-json
-    , containers
     , jose
     , fastsum
     , hasql

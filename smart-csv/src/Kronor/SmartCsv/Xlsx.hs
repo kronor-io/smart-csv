@@ -15,6 +15,8 @@ module Kronor.SmartCsv.Xlsx
     mkXlsxStyles,
     xlsxRowBytes,
     excelMaxDataRows,
+    excelMaxColumns,
+    checkColumnCount,
     sheetNameFor,
 
     -- * Archive
@@ -40,7 +42,7 @@ import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Text
 import Data.Text.Unsafe qualified as Text.Unsafe
-import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnSettings (..), columnDataPath, columnDecimalPlaces, columnHeader, columnIsNumeric)
+import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnKey, OutputColumn (..), outputColumns)
 import Kronor.SmartCsv.Deflate (SegmentEnd (..), crc32, deflateSegment)
 import Kronor.SmartCsv.Flatten (resolveValue)
 import Numeric (showHex)
@@ -67,46 +69,45 @@ data Leaf
   | LeafBool Bool
   | LeafNull
 
--- | Convert one GraphQL response row into cells keyed by header, the way
+-- | Convert one GraphQL response row into cells keyed by column, the way
 -- 'Kronor.SmartCsv.Flatten.csvify' does for CSV: the same data paths, array
 -- joining and decimal places, but numbers stay numbers.
-xlsxify :: ColumnConfig -> Aeson.Value -> Map Text XlsxCell
+xlsxify :: ColumnConfig -> Aeson.Value -> Map ColumnKey XlsxCell
 xlsxify colConfig (Aeson.Object obj) =
-  -- The first column wins when two share a header, as in 'csvify'.
-  Map.fromListWith (\_ firstCell -> firstCell)
-    $ mapMaybe extractColumn (Aeson.KeyMap.toList obj)
+  Map.fromList $ concatMap extractColumns (Aeson.KeyMap.toList obj)
   where
-    extractColumn (key, value) = do
-      let columnId = Aeson.Key.toText key
-      cell <- renderValue columnId (columnDataPath columnId colConfig) value
-      pure (columnHeader columnId colConfig, cell)
+    extractColumns (key, value) =
+      [ (column.key, cell)
+      | column <- toList (outputColumns colConfig (Aeson.Key.toText key)),
+        Just cell <- [renderValue column value]
+      ]
 
-    renderValue :: Text -> [Text] -> Aeson.Value -> Maybe XlsxCell
-    renderValue columnId path (Aeson.Array array) =
-      Just $ case concatMap (itemTexts columnId path) (toList array) of
+    renderValue :: OutputColumn -> Aeson.Value -> Maybe XlsxCell
+    renderValue column (Aeson.Array array) =
+      Just $ case concatMap (itemTexts column) (toList array) of
         [] -> CellEmpty
         texts -> CellText (Text.intercalate ", " texts)
-    renderValue columnId path value = leafCell <$> (resolveValue path value >>= readLeaf columnId)
+    renderValue column value = leafCell <$> (resolveValue column.dataPath value >>= readLeaf column)
 
     -- An array item as the texts it is joined from; a nested array adds its own
     -- items, as 'csvify' does.
-    itemTexts :: Text -> [Text] -> Aeson.Value -> [Text]
-    itemTexts columnId path = \case
+    itemTexts :: OutputColumn -> Aeson.Value -> [Text]
+    itemTexts column = \case
       Aeson.Null -> []
-      Aeson.Array array -> concatMap (itemTexts columnId path) (toList array)
-      value -> maybeToList (resolveValue path value >>= readLeaf columnId >>= leafText)
+      Aeson.Array array -> concatMap (itemTexts column) (toList array)
+      value -> maybeToList (resolveValue column.dataPath value >>= readLeaf column >>= leafText)
 
-    readLeaf :: Text -> Aeson.Value -> Maybe Leaf
-    readLeaf columnId = \case
+    readLeaf :: OutputColumn -> Aeson.Value -> Maybe Leaf
+    readLeaf column = \case
       Aeson.String text
-        | Just decimals <- columnDecimalPlaces columnId colConfig,
+        | Just decimals <- column.decimalPlaces,
           Just value <- readScientific text ->
             Just (LeafNumber (truncateScientific decimals value) (Just decimals) Nothing)
-        | columnIsNumeric columnId colConfig,
+        | column.numeric,
           Just value <- readScientific text ->
             Just (LeafNumber value Nothing (Just text))
         | otherwise -> Just (LeafText text)
-      Aeson.Number value -> Just $ case columnDecimalPlaces columnId colConfig of
+      Aeson.Number value -> Just $ case column.decimalPlaces of
         Just decimals -> LeafNumber (truncateScientific decimals value) (Just decimals) Nothing
         Nothing -> LeafNumber value Nothing Nothing
       Aeson.Bool flag -> Just (LeafBool flag)
@@ -197,7 +198,10 @@ mkXlsxStyles colConfig =
   where
     -- Negative decimal places truncate to tens, hundreds, ... and show none, as in
     -- CSV; more than Excel can show leave the cells as text (see 'leafCell').
-    decimalsUsed = Set.toAscList (Set.fromList (filter (<= excelMaxDecimalPlaces) (mapMaybe (fmap (max 0) . (.decimalPlaces)) (Map.elems colConfig))))
+    decimalsUsed = Set.toAscList (Set.fromList (filter (<= excelMaxDecimalPlaces) (mapMaybe (fmap (max 0)) columnDecimals)))
+    -- The decimal places of the columns the config's fields print: a field's own,
+    -- or those of the entries of its @columns@.
+    columnDecimals = [column.decimalPlaces | columnId <- Map.keys colConfig, column <- toList (outputColumns colConfig columnId)]
     formats = zip [164 :: Int ..] decimalsUsed
     formatCode decimals = "#,##0" <> (if decimals == 0 then "" else "." <> Builder.string7 (replicate decimals '0'))
     xml =
@@ -225,15 +229,17 @@ mkXlsxStyles colConfig =
         <> "</styleSheet>"
 
 -- | One response row as a sheet row, its cells in @headers@ order.
-xlsxRowBytes :: ColumnConfig -> XlsxStyles -> Vector Text -> Aeson.Value -> LByteString
-xlsxRowBytes colConfig styles headers rowValue =
-  Builder.toLazyByteString (rowXml styles headers (xlsxify colConfig rowValue))
+-- | One response row as a sheet row, its cells in @columnKeys@ order (the file's
+-- columns, see 'Kronor.SmartCsv.Pagination.inferColumns').
+xlsxRowBytes :: ColumnConfig -> XlsxStyles -> Vector ColumnKey -> Aeson.Value -> LByteString
+xlsxRowBytes colConfig styles columnKeys rowValue =
+  Builder.toLazyByteString (rowXml styles columnKeys (xlsxify colConfig rowValue))
 
 -- | Rows and cells carry no positions (@r="B7"@): every cell is written, an
 -- empty one as @<c/>@, so each lands in the column after the previous one.
-rowXml :: XlsxStyles -> Vector Text -> Map Text XlsxCell -> Builder
-rowXml styles headers cells =
-  "<row>" <> foldMap (\header -> cellXml styles (Map.findWithDefault CellEmpty header cells)) headers <> "</row>"
+rowXml :: XlsxStyles -> Vector ColumnKey -> Map ColumnKey XlsxCell -> Builder
+rowXml styles columnKeys cells =
+  "<row>" <> foldMap (\columnKey -> cellXml styles (Map.findWithDefault CellEmpty columnKey cells)) columnKeys <> "</row>"
 
 headerRowXml :: XlsxStyles -> Vector Text -> Builder
 headerRowXml styles headers = "<row>" <> foldMap (cellXml styles . CellText) headers <> "</row>"
@@ -309,6 +315,17 @@ excelMaxTextUnits = 32_767
 -- | Rows a sheet holds below its header row.
 excelMaxDataRows :: Int
 excelMaxDataRows = 1_048_575
+
+-- | Columns a sheet holds (A to XFD).  A field with @columns@ can print more than
+-- a query selects, so check the file's columns before starting a sheet.
+excelMaxColumns :: Int
+excelMaxColumns = 16_384
+
+-- | Why a sheet cannot hold a file with this many columns, if it cannot.
+checkColumnCount :: Int -> Either Text ()
+checkColumnCount count
+  | count <= excelMaxColumns = Right ()
+  | otherwise = Left ("The export has " <> tshow count <> " columns; an Excel sheet holds at most " <> tshow excelMaxColumns)
 
 -- | A valid sheet name: at most 31 characters, none of @[]:*?/\\@, not starting or
 -- ending with an apostrophe.

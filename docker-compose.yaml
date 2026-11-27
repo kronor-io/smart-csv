@@ -53,18 +53,32 @@ services:
     volumes:
       - miniodata:/data
 
+  # Creates the bucket once, then stays up without touching MinIO: `docker compose up
+  # --wait` fails if it sees a container that has exited, and the healthcheck makes
+  # --wait wait until the bucket exists (and reports it if the bucket is deleted
+  # later; `docker compose restart minio-init` creates it again). If MinIO can't
+  # be reached or refuses the bucket, the container exits with an error.
   minio-init:
     image: pgsty/mc
     depends_on:
       minio:
         condition: service_started
+    # Forwards SIGTERM to sleep, so stop and down don't wait for the timeout.
+    init: true
     entrypoint: >
       /bin/sh -c "
-      sleep 3;
-      mc alias set local http://minio:9000 smartcsvak smartcsvsk;
-      mc mb --ignore-existing local/smart-csv-reports;
-      exit 0;
+      tries=0;
+      until mc alias set local http://minio:9000 smartcsvak smartcsvsk; do
+      tries=$$((tries + 1)); [ $$tries -ge 30 ] && exit 1; sleep 1;
+      done;
+      mc mb --ignore-existing local/smart-csv-reports || exit 1;
+      exec sleep infinity
       "
+    healthcheck:
+      test: ["CMD-SHELL", "mc stat local/smart-csv-reports > /dev/null"]
+      interval: 1s
+      timeout: 5s
+      retries: 60
 
   mailhog:
     image: mailhog/mailhog
