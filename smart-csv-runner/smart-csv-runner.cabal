@@ -124,7 +124,6 @@ library
     , bytestring
     , cassava
     , co-log-json
-    , containers
     , jose
     , fastsum
     , hasql

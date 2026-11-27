@@ -12,7 +12,6 @@ import Data.ByteString.Builder qualified as Builder
 import Data.ByteString.Lazy qualified as LByteString
 import Data.Coerce (coerce)
 import Data.Csv.Builder qualified as Csv.Builder
-import Data.Map.Strict qualified as Map
 import Data.Morpheus.Core (parseRequest)
 import Data.Morpheus.Internal.Ext (Result (..))
 import Data.Morpheus.Types.IO (GQLRequest (..))
@@ -26,7 +25,7 @@ import JobSchemas.SmartGraphqlCsvGenerate
 import Kronor.Db qualified as Db
 import Kronor.Db.Types.Bigint (Bigint (..))
 import Kronor.Logger (RequestId (..), requestId)
-import Kronor.SmartCsv.ColumnConfig (ColumnConfig)
+import Kronor.SmartCsv.ColumnConfig (ColumnConfig, OutputColumn (..))
 import Kronor.SmartCsv.ColumnConfig qualified as SmartCsvColumnConfig
 import Kronor.SmartCsv.ErrorHandling qualified as SmartCsvErrorHandling
 import Kronor.SmartCsv.ExportFormat (ExportFormat (..))
@@ -129,8 +128,10 @@ generateCSV payload = do
             fileName = inferredRoot <> "." <> ExportFormat.exportFormatExtension exportFormat
             s3Path = [iii|smartPaymentCsv/#{shardId payload}/#{csvId payload}/|] :: Text
             fileKey = s3Path <> fileName
-            inferredHeadersFromGql = SmartCsv.inferHeaders resolvedColumnConfig inferredRootField
-            emptyMap = Map.fromList ((,mempty) <$> inferredHeadersFromGql)
+            -- Cells are keyed by column, not header: two columns can share a header.
+            fileColumns = SmartCsv.inferColumns resolvedColumnConfig inferredRootField
+            fileHeaders = Vector.fromList ((.header) <$> fileColumns)
+            fileColumnKeys = Vector.fromList ((.key) <$> fileColumns)
         authToken <- genTokenFromClaims tokenClaims
         httpManager <- liftIO $ Http.newManager Http.Tls.tlsManagerSettings
         columnConfig <-
@@ -141,19 +142,18 @@ generateCSV payload = do
             fetchRows encodeRow = gqlQuery httpManager pId inferredRootField paginationFields authToken gq inferredRoot encodeRow options.optionsGraphqlPageSize options.optionsGraphqlUrl
         (fetchPage, filePrefix, maxRows) <- case exportFormat of
           Csv -> do
-            let csvHeader = Vector.fromList (encodeUtf8 <$> inferredHeadersFromGql)
             pure
-              ( fetchRows (SmartCsvQuery.csvRowBytes columnConfig inferredRoot emptyMap csvHeader),
-                Builder.toLazyByteString (Csv.Builder.encodeHeader csvHeader),
+              ( fetchRows (SmartCsvQuery.csvRowBytes columnConfig inferredRoot fileColumnKeys),
+                Builder.toLazyByteString (Csv.Builder.encodeHeader (encodeUtf8 <$> fileHeaders)),
                 options.optionsCsvGenerationMaxRows
               )
           Xlsx -> do
+            either (Job.giveupS logSource . display) pure (Xlsx.checkColumnCount (length fileColumns))
             let styles = Xlsx.mkXlsxStyles columnConfig
-                xlsxHeaders = Vector.fromList inferredHeadersFromGql
-            (archivePrefix, archive, sheetEntry) <- liftIO (Xlsx.startArchive xlsxCompressionLevel inferredRoot styles xlsxHeaders)
+            (archivePrefix, archive, sheetEntry) <- liftIO (Xlsx.startArchive xlsxCompressionLevel inferredRoot styles fileHeaders)
             sheetEntryRef <- newIORef (Just sheetEntry)
             pure
-              ( xlsxPages archive sheetEntryRef (fetchRows (Xlsx.xlsxRowBytes columnConfig styles xlsxHeaders)),
+              ( xlsxPages archive sheetEntryRef (fetchRows (Xlsx.xlsxRowBytes columnConfig styles fileColumnKeys)),
                 archivePrefix,
                 min options.optionsCsvGenerationMaxRows Xlsx.excelMaxDataRows
               )
