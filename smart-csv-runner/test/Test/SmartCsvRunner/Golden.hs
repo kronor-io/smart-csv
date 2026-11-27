@@ -3,9 +3,10 @@
 -- output so that a change to the export (a new engine, a dependency bump) shows
 -- up as a diff here instead of in someone's spreadsheet.
 --
--- The expected files live in @test/golden@.  To record them again after an
--- intended change, run the integration tests with @SMART_CSV_ACCEPT_GOLDEN=1@
--- and review the diff.
+-- The expected files live in @test/golden@: a CSV file as it is, an Excel file
+-- as its extracted entries plus the list of its entry names (@.entries@).  To
+-- record them again after an intended change, run the integration tests with
+-- @SMART_CSV_ACCEPT_GOLDEN=1@ and review the diff.
 module Test.SmartCsvRunner.Golden
   ( goldenTests,
   )
@@ -141,13 +142,14 @@ goldenExport pool name format requestBody = do
       Right (_, mLink, _) -> pure (isJust mLink)
       Left err -> assertFailure (show err) >> pure False
   fileLink <- fetchCsvLink pool reportId
-  fileRequest <- HTTP.parseRequest (Text.unpack fileLink)
+  -- Throws on a status other than 2xx, so an S3 error page is never recorded.
+  fileRequest <- HTTP.parseRequestThrow (Text.unpack fileLink)
   bytes <- HTTP.getResponseBody <$> HTTP.httpBS fileRequest
   let goldenName = Text.unpack name <> "." <> Text.unpack (formatName format)
   case format of
     Csv -> compareFile ("test/golden" </> goldenName) bytes
     -- The ZIP's compressed bytes depend on the zlib build, so compare what it
-    -- holds: its entry names, then every entry, after Info-ZIP's unzip has checked
+    -- holds: its entry list, then every entry, after Info-ZIP's unzip has checked
     -- the archive.
     Xlsx -> withSystemTempDirectory "smart-csv-golden" \directory -> do
       let xlsxPath = directory </> "export.xlsx"
@@ -156,13 +158,10 @@ goldenExport pool name format requestBody = do
       writeFileBinary xlsxPath bytes
       void $ runUnzip ["-tq", xlsxPath]
       -- Extracting hides some changes to the entry list, such as an added
-      -- directory entry (xl/), so check the names the archive itself lists.
+      -- directory entry (xl/), so the names the archive lists are a golden file
+      -- of their own, next to the extracted entries.
       entryNames <- List.sort . lines <$> runUnzip ["-Z1", xlsxPath]
-      accept <- acceptGolden
-      unless accept $ do
-        expectedNames <- filesUnderIfExists goldenDir
-        unless (entryNames == expectedNames)
-          $ assertFailure [i|The file's entries are #{entryNames}, but #{goldenDir} holds #{expectedNames}|]
+      compareFile (goldenDir <> ".entries") (encodeUtf8 (Text.pack (unlines entryNames)))
       void $ runUnzip ["-q", xlsxPath, "-d", extracted]
       compareDirectory goldenDir extracted
 
@@ -195,8 +194,9 @@ compareFile goldenPath actual = do
 compareDirectory :: FilePath -> FilePath -> IO ()
 compareDirectory goldenDir actualDir = do
   accept <- acceptGolden
-  when accept $ removePathForcibly goldenDir
+  -- Read (and check) the new entries before removing the recorded ones.
   actualFiles <- filesUnder actualDir
+  when accept $ removePathForcibly goldenDir
   expectedFiles <- filesUnderIfExists goldenDir
   unless (accept || expectedFiles == actualFiles)
     $ assertFailure [i|#{goldenDir} holds #{expectedFiles}, but the file holds #{actualFiles}|]
@@ -295,6 +295,12 @@ cleanupFixture pool = dropFixture Strict pool `finally` Hasql.Pool.release pool
 -- usually is, after the tests every part must be removed.
 data Strictness = Lenient | Strict
 
+-- | The @code@ of a Hasura error response.
+errorCode :: LBS.ByteString -> Maybe Text
+errorCode body = case Aeson.decode body of
+  Just (Aeson.Object fields) | Just (Aeson.String code) <- KeyMap.lookup "code" fields -> Just code
+  _ -> Nothing
+
 dropFixture :: Strictness -> Hasql.Pool.Pool -> IO ()
 dropFixture strictness pool = do
   for_ goldenTables \table -> do
@@ -310,11 +316,14 @@ dropFixture strictness pool = do
                 ]
           ]
     let status = HTTP.getResponseStatusCode response
-    case strictness of
-      Strict
-        | status /= 200 ->
-            assertFailure [i|Hasura pg_untrack_table #{table} failed (#{status}): #{decodeUtf8Lenient (LBS.toStrict (HTTP.getResponseBody response))}|]
-      _ -> pure ()
+        alreadyUntracked = errorCode (HTTP.getResponseBody response) == Just "already-untracked"
+        -- Only a table Hasura doesn't track may be dropped: dropping one it still
+        -- tracks would leave its metadata inconsistent.
+        acceptable = case strictness of
+          Strict -> status == 200
+          Lenient -> status == 200 || alreadyUntracked
+    unless acceptable
+      $ assertFailure [i|Hasura pg_untrack_table #{table} failed (#{status}): #{decodeUtf8Lenient (LBS.toStrict (HTTP.getResponseBody response))}|]
   result <- Hasql.Pool.use pool $ Hasql.Session.sql "DROP TABLE IF EXISTS smart_csv.golden_line, smart_csv.golden_order, smart_csv.golden_customer"
   case result of
     Left err -> assertFailure [i|Dropping the fixture tables failed: #{show err}|]
