@@ -67,13 +67,14 @@ plainRequest =
     []
 
 -- | Headers, decimal places, a data path into an object with several fields and
--- into an array, ordered by a field of a related object.
+-- into an array whose elements have several fields too, ordered by a field of a
+-- related object.
 configRequest :: Aeson.Value
 configRequest =
   request
     "customer.name"
     [Aeson.object ["customer" Aeson..= Aeson.object ["name" Aeson..= ("ASC" :: Text)]], Aeson.object ["id" Aeson..= ("ASC" :: Text)]]
-    "id reference amount rate customer { name email } lines(orderBy: {id: ASC}) { price }"
+    "id reference amount rate customer { name email } lines(orderBy: {id: ASC}) { sku price }"
     [ "columnConfig"
         Aeson..= Aeson.object
           [ "id" Aeson..= Aeson.object ["header" Aeson..= ("Order ID" :: Text)],
@@ -86,13 +87,14 @@ configRequest =
     ]
 
 -- | Numbers Hasura sends as strings, printed with a decimal comma because the
--- schema says they are numeric.
+-- schema says they are numeric, next to text that looks like a number (the
+-- reference 001.20), which keeps its decimal point.
 detectRequest :: Aeson.Value
 detectRequest =
   request
     "createdAt"
     [Aeson.object ["createdAt" Aeson..= ("DESC" :: Text)], Aeson.object ["id" Aeson..= ("DESC" :: Text)]]
-    "id amount rate quantity big createdAt customer { balance }"
+    "id reference amount rate quantity big createdAt customer { balance }"
     ["detectNumericColumns" Aeson..= True]
 
 request :: Text -> [Aeson.Value] -> Text -> [(Aeson.Key, Aeson.Value)] -> Aeson.Value
@@ -333,7 +335,10 @@ dropFixture strictness pool = do
 -- a leading formula character, non-ASCII names, an empty string next to nulls,
 -- negative and very large numbers, a bigint past 2^53, tiny and long floats.
 -- Customer names sort byte by byte (COLLATE "C"), so the configured exports,
--- which order by customer name, don't depend on the database's locale.
+-- which order by customer name, don't depend on the database's locale; that
+-- order differs from the customers' ids, so sorting by the id would show.  The
+-- rate 2.3459 shows whether three decimal places truncate (2,345, today) or
+-- round.
 fixtureSql :: Text
 fixtureSql =
   "CREATE TABLE smart_csv.golden_customer (\
@@ -364,12 +369,12 @@ fixtureSql =
   \  price numeric(12,2) NOT NULL\
   \);\
   \INSERT INTO smart_csv.golden_customer VALUES\
-  \  (1, 1, 'Ada Lovelace', 'ada@example.com', 100.00),\
-  \  (2, 1, 'Bob, Jr.', 'bob@example.com', -5.50),\
+  \  (1, 1, 'Bob, Jr.', 'bob@example.com', -5.50),\
+  \  (2, 1, 'Ada Lovelace', 'ada@example.com', 100.00),\
   \  (3, 1, 'Åsa Ödegård', 'asa@example.se', 0.10);\
   \INSERT INTO smart_csv.golden_order VALUES\
-  \  (1, 1, 1, 'A-1', 10.50, 0.1, 3, 9007199254740993, true, 'plain', '2026-01-15T10:00:00Z'),\
-  \  (2, 1, 2, 'B, with comma', -1234.56, 2.5, 0, 42, false, NULL, '2026-01-15T10:00:00Z'),\
+  \  (1, 1, 1, '001.20', 10.50, 0.1, 3, 9007199254740993, true, 'plain', '2026-01-15T10:00:00Z'),\
+  \  (2, 1, 2, 'B, with comma', -1234.56, 2.3459, 0, 42, false, NULL, '2026-01-15T10:00:00Z'),\
   \  (3, 1, 3, 'quote \"inside\"', 0.00, 0.0000001, -7, -1, true, E'line one\\nline two', '2026-01-15T11:30:00Z'),\
   \  (4, 1, 1, '=SUM(A1:A2)', 99999999.99, 123456.789, 1, 0, false, '', '2026-01-16T09:15:00Z'),\
   \  (5, 1, 2, '+46 70 123', 1.10, NULL, NULL, NULL, NULL, ';semicolon', '2026-01-17T00:00:00Z');\
