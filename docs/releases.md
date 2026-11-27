@@ -8,10 +8,10 @@
 | `v1.2.3` | `1.2.3` and `latest` | a commit made on `main` only (on its first-parent history, so not one that reached `main` through a merge); the release job fails otherwise |
 | `rc-<name>` | `rc-<name>` only | any commit that has this release job, typically on the `kronor` branch |
 
-The release job checks the tag before it builds anything:
+For a tag, CI checks the tag in its first job (Check the release tag), and builds nothing if it's refused:
 
-- A version tag is `v<major>.<minor>.<patch>` and nothing else, so a version's image tag can never be
-  a pre-release's.
+- A version tag is `v<major>.<minor>.<patch>` and nothing else (at most 9 digits each), so a
+  version's image tag can never be a pre-release's.
 - A pre-release's name becomes its image tag as it is, so after `rc-` it may only use letters,
   digits, `_`, `.` and `-`, at most 125 characters (Docker's limit is 128).
 
@@ -41,3 +41,9 @@ never produces a version: its images are `rc-*` pre-releases, for trying a build
 - `main` is merged into `kronor` weekly, and whenever the export loop changes on `main`.
 - Changes that leave the runner's behaviour unchanged go to `main` first.
 - When the branch is done it is merged into `main` once, and released as a new major version.
+- That merge goes through a pull request, squashed like every other (the only merge method this
+  repository allows), so `kronor`'s own commits never land on `main`'s first-parent history and
+  can't be tagged as a version. If it is ever merged outside a pull request, use
+  `git merge --no-ff kronor`: a fast-forward would put them there.
+- A pull request retargeted to `kronor` (or from it) isn't tested against its new base until
+  something triggers CI again: close and reopen it.
