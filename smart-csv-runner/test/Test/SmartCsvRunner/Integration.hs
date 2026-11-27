@@ -1,5 +1,14 @@
 module Test.SmartCsvRunner.Integration
   ( integrationTests,
+    -- * Helpers shared with "Test.SmartCsvRunner.Golden"
+    extractReportId,
+    fetchCsvLink,
+    mkPool,
+    postHasuraMetadata,
+    postRestApiWithAuth,
+    runSession,
+    testShardId,
+    waitFor,
   )
 where
 

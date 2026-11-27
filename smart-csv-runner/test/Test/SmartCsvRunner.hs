@@ -21,6 +21,7 @@ import SmartCsvApi.Handler.SmartGraphqlCsvGenerator (exportTokenClaims)
 import SmartCsvApi.RestServer qualified as RestServer
 import SmartCsvApi.Types.SmartGraphqlCsvGenerator (SmartGraphqlCsvGeneratorInput (..), SmartGraphqlCsvGeneratorResult (..))
 import SmartCsvApi.Validation.SmartGraphqlCsvGenerator qualified as Val
+import Test.SmartCsvRunner.Golden (goldenTests)
 import Test.SmartCsvRunner.Integration (integrationTests)
 import Test.Tasty (TestTree, defaultMain, testGroup)
 import Test.Tasty.HUnit (Assertion, assertFailure, testCase, (@?=))
@@ -61,7 +62,8 @@ tests =
           testCase "signJwtFromClaims produces verifiable token claims" testSignJwtFromClaimsRoundtrip,
           testCase "signJwtFromClaims leaves out claims the source token did not have" testSignJwtFromClaimsOmitsMissingClaims
         ],
-      integrationTests
+      integrationTests,
+      goldenTests
     ]
 
 mkInput :: SmartGraphqlCsvGeneratorInput
