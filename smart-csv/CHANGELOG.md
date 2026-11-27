@@ -8,7 +8,7 @@ separately; see [docs/releases.md](../docs/releases.md).
 
 ### Breaking changes and how to migrate
 
-- **The CSV functions take a `CsvFormat` first** (#23): `csvify`, `csvRowBytes`,
+- **The CSV functions take a `CsvFormat` first** (#24): `csvify`, `csvRowBytes`,
   `decodeResponsePage`, `decodeResponseChunk`, their `With` variants and
   `decodeResponseRows`. Pass `defaultCsvFormat` for the files they wrote before.
 - **Modules are renamed from `Kronor.SmartCsv.*` to `SmartCsv.*`** (#20), for
@@ -50,7 +50,7 @@ separately; see [docs/releases.md](../docs/releases.md).
 - `excelMaxColumns` and `checkColumnCount`, to refuse an Excel export with more
   columns than a sheet holds (#17).
 
-- `SmartCsv.CsvFormat` (#23): `CsvFormat` with `decimalSeparator`
+- `SmartCsv.CsvFormat` (#24): `CsvFormat` with `decimalSeparator`
   (`DecimalComma`, the default, or `DecimalPoint`) and `escapeFormulas` (off by
   default), which writes a text cell starting with `=`, `+`, `-`, `@`, a tab or a
   carriage return with a leading `'` so spreadsheets open it as text. Cells that
