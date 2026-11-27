@@ -114,13 +114,13 @@ Once a request is accepted:
 
 1. The service inserts a record into the database, which triggers a state machine and enqueues a background job.
 2. The worker picks up the job, signs a JWT with the organization's claims, and begins paginating through the GraphQL endpoint.
-3. Each page of results is converted into CSV rows using one column per selected field. Scalar fields are written directly, and nested object/array fields can be reduced to a single nested value via `columnConfig.dataPath`.
+3. Each page of results is converted into CSV rows using one column per selected field, or several when its `columnConfig` entry lists `columns`. Scalar fields are written directly, and nested object/array fields can be reduced to a single nested value via `columnConfig.dataPath`.
 4. Rows are streamed to S3 as a multipart upload in ~5 MB chunks.
 5. When complete, a presigned download URL is stored in the database and emailed to the recipient.
 
 ### JSON To CSV
 
-Each selected GraphQL field produces at most one CSV column.
+Each selected GraphQL field produces one CSV column, or one per entry when its config lists `columns` (see [Several columns from one field](column-presets.md#several-columns-from-one-field)).
 
 Given a GraphQL response row:
 

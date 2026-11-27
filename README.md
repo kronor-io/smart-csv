@@ -24,8 +24,8 @@ Worker (Streamly dequeuer)  →  Query Hasura GraphQL  →  Flatten to CSV
 
 The project is split into two Cabal packages:
 
-- **smart-csv** — Library with CSV generation primitives: validation, pagination, JSON flattening, and database statements (via [hasql-th](https://hackage.haskell.org/package/hasql-th) compile-time–checked SQL).
-- **smart-csv-runner** — Binary containing the REST API server and background job worker, with S3 upload, email delivery, and OpenTelemetry tracing.
+- **smart-csv** — Library with CSV generation primitives: validation, pagination, JSON flattening, column config and Excel output. It has no database code, so another service can use it with its own tables.
+- **smart-csv-runner** — Binary containing the REST API server and background job worker, with the database statements (via [hasql-th](https://hackage.haskell.org/package/hasql-th) compile-time–checked SQL), S3 upload, email delivery, and OpenTelemetry tracing.
 
 ## Prerequisites (development only)
 
@@ -152,6 +152,10 @@ The service reads configuration from environment variables. See `_dev/smart-csv-
 - **Linter**: [hlint](https://github.com/ndmitchell/hlint)
 - **Language**: GHC 9.12 / GHC2024
 - **Build**: Cabal with Nix flake for dependencies
+
+## Releases
+
+Images are published for tags only: `v*` tags (commits on `main` only) push a version and `:latest`, `rc-*` tags push a pre-release under its own tag. See [docs/releases.md](docs/releases.md) for what a version may change.
 
 ## License
 
