@@ -119,6 +119,21 @@ The golden-file tests (`Test.SmartCsvRunner.Golden`) compare the files the runne
 SMART_CSV_ACCEPT_GOLDEN=1 direnv exec . cabal test smart-csv-runner-test --test-option="--pattern=golden"
 ```
 
+### The library with Kronor's versions
+
+Kronor uses the `smart-csv` library with its own dependency versions (for example morpheus-graphql-core 0.28 and aeson 2.3 with `+ordered-keymap`), while the runner builds with `cabal.project.freeze`. The library's version bounds allow both, and the CI job "Library with Kronor's versions" builds and tests it with Kronor's:
+
+```bash
+cabal test --project-file=cabal.project.kronor all   # needs Kronor's GHC (see with-compiler)
+```
+
+`cabal.project.kronor` and its freeze file hold only the packages the library uses, at Kronor's versions. When Kronor upgrades a dependency or GHC, regenerate them from Kronor's dev shell:
+
+```bash
+git -C <kronor checkout> fetch origin
+_dev/sync-kronor-versions.sh <kronor checkout>   # reads origin/master; pass another ref as the second argument
+```
+
 ## API
 
 ### `GET /health`

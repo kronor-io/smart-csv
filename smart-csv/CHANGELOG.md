@@ -43,6 +43,9 @@ separately; see [docs/releases.md](../docs/releases.md).
   `inferColumns` (#17).
 - `excelMaxColumns` and `checkColumnCount`, to refuse an Excel export with more
   columns than a sheet holds (#17).
+- Version bounds on every dependency. They allow both the runner's versions and
+  Kronor's (morpheus-graphql-core 0.27 and 0.28, aeson 2.2 and 2.3, containers
+  0.6 and 0.7), and CI builds and tests the library with each (#21).
 
 ## 0.1.0.0
 

@@ -86,18 +86,20 @@ library
   hs-source-dirs:   src
   -- crc32 comes from zlib.h
   pkgconfig-depends: zlib
+  -- The lower bounds are the runner's versions (cabal.project.freeze), the upper
+  -- bounds allow Kronor's (cabal.project.kronor.freeze); CI builds and tests both.
   build-depends:
-      aeson
-    , base                   >=4.11     && <10
-    , bytestring
-    , cassava
-    , containers
-    , morpheus-graphql-core
-    , rio                    >=0.1.12.0
-    , scientific
-    , streaming-commons
-    , text
-    , vector
+      aeson                  >=2.2.3    && <2.4
+    , base                   >=4.21     && <5
+    , bytestring             >=0.12     && <0.13
+    , cassava                >=0.5.4    && <0.6
+    , containers             >=0.6.8    && <0.8
+    , morpheus-graphql-core  >=0.27.3   && <0.29
+    , rio                    >=0.1.24   && <0.2
+    , scientific             >=0.3.8    && <0.4
+    , streaming-commons      >=0.2.3    && <0.3
+    , text                   >=2.1      && <2.2
+    , vector                 >=0.13.2   && <0.14
 
 test-suite smart-csv-test
   import: common-component-settings
