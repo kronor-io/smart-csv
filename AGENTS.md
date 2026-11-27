@@ -4,8 +4,8 @@
 
 Smart CSV is a standalone service that generates CSV files from GraphQL queries. It consists of:
 
-- **smart-csv** — Haskell library with CSV generation primitives (validation, pagination, flattening, DB statements)
-- **smart-csv-runner** — Haskell binary with REST API server + background job worker (S3 upload, email, OpenTelemetry tracing)
+- **smart-csv** — Haskell library with CSV generation primitives (validation, pagination, flattening, column config, Excel). No database code: keep it that way, so other services can use the library with their own tables
+- **smart-csv-runner** — Haskell binary with REST API server + background job worker (DB statements, S3 upload, email, OpenTelemetry tracing)
 
 ## Architecture
 
@@ -29,7 +29,7 @@ Worker (Streamly dequeuer)  →  Query Hasura GraphQL  →  Flatten to CSV
 
 ### Key Haskell Modules
 
-- `Kronor.SmartCsv.Statements` — SQL quasiquotes for DB operations
+- `SmartCsvRunner.Db.Statements` — SQL quasiquotes for the worker's DB operations
 - `SmartCsvApi.RestServer` — Servant REST API (`/health`, `/api/v1/csv/generate`)
 - `SmartCsvApi.Handler.SmartGraphqlCsvGenerator` — Request handler (validation, DB insert, token claims)
 - `SmartCsvRunner.ThreadManager` — Starts API + worker threads with `Immortal`

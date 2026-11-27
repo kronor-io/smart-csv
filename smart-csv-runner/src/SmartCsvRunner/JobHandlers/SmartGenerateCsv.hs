@@ -36,7 +36,6 @@ import Kronor.SmartCsv.Pagination qualified as SmartCsv
 import Kronor.SmartCsv.Query (EncodedResponsePage (..), GenericQuery (..))
 import Kronor.SmartCsv.Query qualified as SmartCsvQuery
 import Kronor.SmartCsv.Schema qualified as SmartCsvSchema
-import Kronor.SmartCsv.Statements qualified as SmartCsvStatements
 import Kronor.SmartCsv.TokenClaims qualified as SmartCsvTokenClaims
 import Kronor.SmartCsv.Xlsx qualified as Xlsx
 import Network.HTTP.Client qualified as Http
@@ -48,6 +47,7 @@ import RIO.Vector qualified as Vector
 import SmartCsvApi.Auth qualified as SmartCsvAuth
 import SmartCsvRunner.AWS.Types
 import SmartCsvRunner.CsvGeneration.Generate qualified as Generate
+import SmartCsvRunner.Db.Statements qualified as SmartCsvStatements
 import SmartCsvRunner.Env (Options (..))
 import SmartCsvRunner.Job (Job, JobEnv (jobEnv), getJobId)
 import SmartCsvRunner.Job qualified as Job
