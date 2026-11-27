@@ -151,10 +151,15 @@ jobs:
                 exit 1
               fi
               # It moves :latest, which deployments follow without choosing to
-              # upgrade, so it may only release a commit that is on main. The full
-              # ref, so that a tag named origin/main can't stand in for the branch.
-              if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
-                echo "::error::$GITHUB_REF_NAME points at a commit that is not on main. Only main is released as a version; tag a pre-release rc-* instead."
+              # upgrade, so it may only release a commit made on main itself: one on
+              # main's first-parent history. A commit that only reached main through
+              # a merge (an intermediate commit of the kronor branch) doesn't count.
+              # The full ref, so that a tag named origin/main can't stand in for the
+              # branch. Process substitution, not a pipe: grep -q stops reading early,
+              # and pipefail would turn that into a failure.
+              commit="$(git rev-parse "$GITHUB_SHA^{commit}")"
+              if ! grep -qx "$commit" <(git rev-list --first-parent refs/remotes/origin/main); then
+                echo "::error::$GITHUB_REF_NAME points at a commit that was not made on main. Only main is released as a version; tag a pre-release rc-* instead."
                 exit 1
               fi
               ;;

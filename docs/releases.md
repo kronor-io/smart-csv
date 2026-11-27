@@ -5,7 +5,7 @@
 
 | Tag | Image tags pushed | Allowed on |
 |-----|-------------------|------------|
-| `v1.2.3` | `1.2.3` and `latest` | a commit on `main` only; the release job fails otherwise |
+| `v1.2.3` | `1.2.3` and `latest` | a commit made on `main` only (on its first-parent history, so not one that reached `main` through a merge); the release job fails otherwise |
 | `rc-<name>` | `rc-<name>` only | any commit that has this release job, typically on the `kronor` branch |
 
 The release job checks the tag before it builds anything:
