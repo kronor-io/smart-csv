@@ -6,12 +6,13 @@ import Data.Bits (shiftL, shiftR, testBit, (.|.))
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteString.Char8
 import Data.ByteString.Lazy qualified as LByteString
+import Data.List.NonEmpty (nonEmpty)
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as Text
 import Data.Vector qualified as Vector
 import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnKey (..), ColumnSettings (..), OutputColumn (..), defaultColumnSettings, outputColumns)
 import Kronor.SmartCsv.Deflate (SegmentEnd (..), crc32, deflateSegment)
-import Kronor.SmartCsv.Xlsx (SheetEntry (..), XlsxCell (..), appendRows, finishArchive, mkXlsxStyles, sheetNameFor, startArchive, xlsxRowBytes, xlsxify)
+import Kronor.SmartCsv.Xlsx (SheetEntry (..), XlsxCell (..), appendRows, checkColumnCount, finishArchive, mkXlsxStyles, sheetNameFor, startArchive, xlsxRowBytes, xlsxify)
 import RIO
 import RIO.List (find, iterate)
 import Test.Tasty (TestTree, testGroup)
@@ -32,6 +33,7 @@ tests =
       testCase "xlsxify prints each entry of columns like a column of its own" testXlsxifyColumns,
       testCase "xlsxRowBytes writes every cell so empty ones keep their column" testRowBytes,
       testCase "xlsxRowBytes keeps each column's value when two share a header" testRowBytesSharedHeader,
+      testCase "a field's columns can exceed the columns a sheet holds" testColumnLimit,
       testCase "xlsxRowBytes escapes markup and characters XML cannot hold" testEscaping,
       testCase "sheetNameFor makes a valid sheet name" testSheetName,
       testCase "an archive built page by page reads back as a valid ZIP" testArchiveRoundTrip
@@ -202,6 +204,15 @@ testRowBytesSharedHeader = do
       row = Aeson.object [("customer", Aeson.object [("billing", address "a@example.com"), ("shipping", address "b@example.com")])]
   xlsxRowBytes config (mkXlsxStyles config) (Vector.fromList [ColumnKey "customer" (Just 0), ColumnKey "customer" (Just 1)]) row
     @?= "<row><c t=\"inlineStr\"><is><t>a@example.com</t></is></c><c t=\"inlineStr\"><is><t>b@example.com</t></is></c></row>"
+
+-- One field can print more columns than a sheet holds, so the runner checks the
+-- file's columns with checkColumnCount before it starts the sheet.
+testColumnLimit :: IO ()
+testColumnLimit = do
+  let entry = ColumnSettings Nothing Nothing (Just "value") False Nothing
+      columnsOf count = length (outputColumns (Map.fromList [("wide", defaultColumnSettings {columns = nonEmpty (replicate count entry)})]) "wide")
+  checkColumnCount (columnsOf 16_384) @?= Right ()
+  checkColumnCount (columnsOf 16_385) @?= Left "The export has 16385 columns; an Excel sheet holds at most 16384"
 
 testEscaping :: IO ()
 testEscaping = do

@@ -15,6 +15,8 @@ module Kronor.SmartCsv.Xlsx
     mkXlsxStyles,
     xlsxRowBytes,
     excelMaxDataRows,
+    excelMaxColumns,
+    checkColumnCount,
     sheetNameFor,
 
     -- * Archive
@@ -313,6 +315,17 @@ excelMaxTextUnits = 32_767
 -- | Rows a sheet holds below its header row.
 excelMaxDataRows :: Int
 excelMaxDataRows = 1_048_575
+
+-- | Columns a sheet holds (A to XFD).  A field with @columns@ can print more than
+-- a query selects, so check the file's columns before starting a sheet.
+excelMaxColumns :: Int
+excelMaxColumns = 16_384
+
+-- | Why a sheet cannot hold a file with this many columns, if it cannot.
+checkColumnCount :: Int -> Either Text ()
+checkColumnCount count
+  | count <= excelMaxColumns = Right ()
+  | otherwise = Left ("The export has " <> tshow count <> " columns; an Excel sheet holds at most " <> tshow excelMaxColumns)
 
 -- | A valid sheet name: at most 31 characters, none of @[]:*?/\\@, not starting or
 -- ending with an apostrophe.

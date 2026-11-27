@@ -148,6 +148,7 @@ generateCSV payload = do
                 options.optionsCsvGenerationMaxRows
               )
           Xlsx -> do
+            either (Job.giveupS logSource . display) pure (Xlsx.checkColumnCount (length fileColumns))
             let styles = Xlsx.mkXlsxStyles columnConfig
             (archivePrefix, archive, sheetEntry) <- liftIO (Xlsx.startArchive xlsxCompressionLevel inferredRoot styles fileHeaders)
             sheetEntryRef <- newIORef (Just sheetEntry)
