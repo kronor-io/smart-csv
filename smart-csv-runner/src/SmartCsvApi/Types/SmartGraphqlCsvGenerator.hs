@@ -6,8 +6,8 @@ where
 
 import Data.Aeson (FromJSON, ToJSON, Value)
 import Kronor.Db.Types.Bigint (Bigint)
-import Kronor.SmartCsv.ExportFormat (ExportFormat)
 import RIO
+import SmartCsv.ExportFormat (ExportFormat)
 
 -- | Input type for the smartGraphqlCsvGenerator mutation
 data SmartGraphqlCsvGeneratorInput = SmartGraphqlCsvGeneratorInput

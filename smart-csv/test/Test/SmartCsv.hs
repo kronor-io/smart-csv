@@ -1,4 +1,4 @@
-module Test.Kronor.SmartCsv (main) where
+module Test.SmartCsv (main) where
 
 import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as KeyMap
@@ -10,24 +10,25 @@ import Data.Morpheus.Internal.Ext (Result (..))
 import Data.Morpheus.Types.IO (GQLRequest (..))
 import Data.Morpheus.Types.Internal.AST (ExecutableDocument (..), Operation (..), RAW, Selection)
 import Data.Vector qualified as Vector
-import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnKey (..), ColumnSettings (..), defaultColumnSettings, parseColumnConfig)
+import SmartCsv.ColumnConfig (ColumnConfig, ColumnKey (..), ColumnSettings (..), defaultColumnSettings, parseColumnConfig)
 -- OutputColumn's fields, for .header and .key: unqualified they would make record
 -- updates of ColumnSettings ambiguous.
-import Kronor.SmartCsv.ColumnConfig qualified as ColumnConfig
-import Kronor.SmartCsv.ErrorHandling (ErrorAction (..), classifyCursorError, classifyHttpStatusError, classifyJsonDecodeError, classifyResponseError, classifyTokenClaimsError)
-import Kronor.SmartCsv.Flatten (csvify, gatherSelectionNames)
-import Kronor.SmartCsv.Notification (CompletionEmail (..), EnqueueMeta (..), defaultEnqueueMeta, mkCompletionEmail)
-import Kronor.SmartCsv.Pagination (CursorError (..), PaginationCursor (..), PaginationDirection (..), PaginationField (..), extractCursorValue, inferColumns, inferHeaders)
-import Kronor.SmartCsv.Schema (SchemaTypes (..), introspectionRequestBody, markNumericColumns, numericColumns, parseIntrospectionResponse)
-import Kronor.SmartCsv.Query (DecodedResponsePage (..), GenericQuery (..), ResponseError (..), buildRequestBody, csvRowBytes, decodeResponseChunk, decodeResponsePage, decodeResponseRows, decodedResponsePageBytes, resolvePaginationFields, resolvePaginationKey)
-import Kronor.SmartCsv.TokenClaims (HasuraRoleError (..), ParsedTokenClaims (..), TokenClaimsError (..), parseTokenClaims, selectHasuraRole)
-import Kronor.SmartCsv.Validation qualified as SmartCsvValidation
 import RIO
 import RIO.ByteString.Lazy qualified as LByteString
 import RIO.List (headMaybe)
 import RIO.Set qualified as Set
-import Test.Kronor.SmartCsv.Xlsx (byHeader)
-import Test.Kronor.SmartCsv.Xlsx qualified
+import SmartCsv.ColumnConfig qualified as ColumnConfig
+import SmartCsv.CsvFormat (CsvFormat (..), DecimalSeparator (..), defaultCsvFormat, escapeFormula)
+import SmartCsv.ErrorHandling (ErrorAction (..), classifyCursorError, classifyHttpStatusError, classifyJsonDecodeError, classifyResponseError, classifyTokenClaimsError)
+import SmartCsv.Flatten (csvify, gatherSelectionNames)
+import SmartCsv.Notification (CompletionEmail (..), EnqueueMeta (..), defaultEnqueueMeta, mkCompletionEmail)
+import SmartCsv.Pagination (CursorError (..), PaginationCursor (..), PaginationDirection (..), PaginationField (..), extractCursorValue, inferColumns, inferHeaders)
+import SmartCsv.Query (DecodedResponsePage (..), GenericQuery (..), ResponseError (..), buildRequestBody, csvRowBytes, decodeResponseChunk, decodeResponsePage, decodeResponseRows, decodedResponsePageBytes, resolvePaginationFields, resolvePaginationKey)
+import SmartCsv.Schema (SchemaTypes (..), introspectionRequestBody, markNumericColumns, numericColumns, parseIntrospectionResponse)
+import SmartCsv.TokenClaims (HasuraRoleError (..), ParsedTokenClaims (..), TokenClaimsError (..), parseTokenClaims, selectHasuraRole)
+import SmartCsv.Validation qualified as SmartCsvValidation
+import Test.SmartCsv.Xlsx (byHeader)
+import Test.SmartCsv.Xlsx qualified
 import Test.Tasty (TestTree, defaultMain, testGroup)
 import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
 
@@ -101,6 +102,13 @@ tests =
       testCase "csvify prints each entry of columns like a column of its own" testCsvifyColumnsLikeOwnColumns,
       testCase "csvify applies columns to every element of an array" testCsvifyColumnsArray,
       testCase "csvRowBytes keeps each column's value when two share a header" testCsvRowBytesSharedHeader,
+      testCase "csvify writes a decimal point with DecimalPoint" testCsvifyDecimalPoint,
+      testCase "csvify leaves cells that look like formulas alone by default" testCsvifyNoEscapingByDefault,
+      testCase "csvify escapes text cells that start like a formula" testCsvifyEscapesFormulas,
+      testCase "csvify never escapes cells that start with a number" testCsvifyEscapingSkipsNumbers,
+      testCase "csvify escapes a string that isn't a number in a numeric column" testCsvifyEscapesNonNumberInNumericColumn,
+      testCase "csvRowBytes quotes an escaped cell like any other" testCsvRowBytesEscapedQuoting,
+      testCase "escapeFormula prefixes only cells that start with a formula character" testEscapeFormula,
       testCase "introspectionRequestBody is a valid GraphQL query" testIntrospectionRequestBodyParses,
       testCase "parseIntrospectionResponse keeps the named type of each field" testParseIntrospectionResponse,
       testCase "numericColumns finds the columns that print a numeric scalar" testNumericColumns,
@@ -114,7 +122,7 @@ tests =
       testCase "extractCursorValue returns error when pagination field is not selected" testExtractCursorMissingSelection,
       testCase "extractCursorValue reads the cursor whatever columns the file prints" testExtractCursorIgnoresColumns,
       testCase "decodeResponseRows with empty config uses alias ids" testDecodeResponseRowsPassThrough,
-      Test.Kronor.SmartCsv.Xlsx.tests
+      Test.SmartCsv.Xlsx.tests
     ]
 
 testCsvify :: IO ()
@@ -481,7 +489,7 @@ testDecodeResponseRows = do
                 ]
             )
           ]
-  fmap (byHeader columnConfig) <$> decodeResponseRows columnConfig "paymentRequests" paymentRequestKeys response
+  fmap (byHeader columnConfig) <$> decodeResponseRows defaultCsvFormat columnConfig "paymentRequests" paymentRequestKeys response
     @?= Right (Vector.fromList [Map.fromList [("Payment Request ID", "wt_777"), ("Placed At", "2026-03-16T14:22:00Z")]])
 
 testDecodeResponsePage :: IO ()
@@ -489,7 +497,7 @@ testDecodeResponsePage = do
   let response =
         ByteString.Char8.pack
           "{\"data\":{\"paymentRequests\":[{\"payment_request_id\":\"wt_777\",\"placed_at\":\"2026-03-16T14:22:00Z\"},{\"payment_request_id\":\"wt_778\",\"placed_at\":\"2026-03-16T14:23:00Z\"}]}}"
-  case decodeResponsePage columnConfig "paymentRequests" paymentRequestKeys response of
+  case decodeResponsePage defaultCsvFormat columnConfig "paymentRequests" paymentRequestKeys response of
     Left err -> assertFailure err
     Right (Left responseErr) -> assertFailure (show responseErr)
     Right (Right decodedPage) -> do
@@ -504,7 +512,7 @@ testDecodeResponseChunk = do
         ByteString.Char8.pack
           "{\"data\":{\"paymentRequests\":[{\"payment_request_id\":\"wt_777\",\"placed_at\":\"2026-03-16T14:22:00Z\"},{\"payment_request_id\":\"wt_778\",\"placed_at\":\"2026-03-16T14:23:00Z\"}]}}"
       firstRow = LByteString.fromStrict "wt_777,2026-03-16T14:22:00Z\r\n"
-  case decodeResponseChunk (LByteString.length firstRow) columnConfig "paymentRequests" paymentRequestKeys response of
+  case decodeResponseChunk (LByteString.length firstRow) defaultCsvFormat columnConfig "paymentRequests" paymentRequestKeys response of
     Left err -> assertFailure err
     Right (Left responseErr) -> assertFailure (show responseErr)
     Right (Right decodedPage) -> do
@@ -515,7 +523,7 @@ testDecodeResponseChunk = do
 testDecodeResponsePageError :: IO ()
 testDecodeResponsePageError = do
   let response = ByteString.Char8.pack "{\"error\":\"transient upstream error\"}"
-  case decodeResponsePage columnConfig "paymentRequests" paymentRequestKeys response of
+  case decodeResponsePage defaultCsvFormat columnConfig "paymentRequests" paymentRequestKeys response of
     Left err -> assertFailure err
     Right (Left responseErr) -> responseErr @?= ResponseContainsError "transient upstream error"
     Right (Right _) -> assertFailure "expected top-level response error"
@@ -523,7 +531,7 @@ testDecodeResponsePageError = do
 testDecodeResponseRowsMissingRoot :: IO ()
 testDecodeResponseRowsMissingRoot = do
   let response = Aeson.object [("data", Aeson.object [("otherRoot", Aeson.Array Vector.empty)])]
-  decodeResponseRows mempty "paymentRequests" mempty response @?= Left ResponseMissingRootData
+  decodeResponseRows defaultCsvFormat mempty "paymentRequests" mempty response @?= Left ResponseMissingRootData
 
 testParseTokenClaims :: IO ()
 testParseTokenClaims = do
@@ -944,7 +952,126 @@ testCsvifyCustomDecimalPlaces = do
 -- | An entry of @columns@: header, data path, decimal places.
 -- | 'csvify' by header, for assertions that read like the file (see 'byHeader').
 csvifyByHeader :: ColumnConfig -> Text -> Aeson.Value -> Map Text ByteString
-csvifyByHeader config root row = byHeader config (csvify config root row)
+csvifyByHeader = csvifyByHeaderWith defaultCsvFormat
+
+csvifyByHeaderWith :: CsvFormat -> ColumnConfig -> Text -> Aeson.Value -> Map Text ByteString
+csvifyByHeaderWith csvFormat config root row = byHeader config (csvify csvFormat config root row)
+
+escaping :: CsvFormat
+escaping = defaultCsvFormat {escapeFormulas = True}
+
+testCsvifyDecimalPoint :: IO ()
+testCsvifyDecimalPoint = do
+  let config =
+        Map.fromList
+          [ ("amount", ColumnSettings (Just 3) Nothing Nothing False Nothing),
+            ("rate", ColumnSettings (Just 4) Nothing Nothing False Nothing),
+            ("balance", ColumnSettings Nothing Nothing Nothing True Nothing)
+          ]
+      row =
+        Aeson.object
+          [ ("amount", Aeson.Number 12.3456),
+            ("rate", Aeson.String "1.23456"),
+            ("balance", Aeson.String "5.25"),
+            ("price", Aeson.Number 0.5),
+            ("count", Aeson.Number 7),
+            ("amounts", Aeson.toJSON [Aeson.Number 1.5, Aeson.Number 2.25])
+          ]
+  csvifyByHeaderWith defaultCsvFormat {decimalSeparator = DecimalPoint} config "orders" row
+    @?= Map.fromList
+      [ ("amount", "12.345"),
+        ("rate", "1.2345"),
+        ("balance", "5.25"),
+        ("price", "0.5"),
+        ("count", "7"),
+        ("amounts", "1.5, 2.25")
+      ]
+
+testCsvifyNoEscapingByDefault :: IO ()
+testCsvifyNoEscapingByDefault =
+  csvifyByHeader mempty "orders" (Aeson.object [("memo", Aeson.String "=SUM(A1:A9)")])
+    @?= Map.fromList [("memo", "=SUM(A1:A9)")]
+
+testCsvifyEscapesFormulas :: IO ()
+testCsvifyEscapesFormulas = do
+  let row =
+        Aeson.object
+          [ ("equals", Aeson.String "=SUM(A1:A9)"),
+            ("plus", Aeson.String "+46 70 123"),
+            ("minus", Aeson.String "-reference"),
+            ("at", Aeson.String "@user"),
+            ("tab", Aeson.String "\tindented"),
+            ("carriageReturn", Aeson.String "\rline"),
+            ("lineFeed", Aeson.String "\n=1+1"),
+            ("fullWidth", Aeson.String "＝1+1"),
+            ("plain", Aeson.String "a = b"),
+            ("empty", Aeson.String ""),
+            ("tags", Aeson.toJSON [Aeson.String "=x", Aeson.String "=y"])
+          ]
+  csvifyByHeaderWith escaping mempty "orders" row
+    @?= Map.fromList
+      [ ("equals", "'=SUM(A1:A9)"),
+        ("plus", "'+46 70 123"),
+        ("minus", "'-reference"),
+        ("at", "'@user"),
+        ("tab", "'\tindented"),
+        ("carriageReturn", "'\rline"),
+        ("lineFeed", "'\n=1+1"),
+        ("fullWidth", encodeUtf8 "'＝1+1"),
+        ("plain", "a = b"),
+        ("empty", ""),
+        -- Only the start of a cell makes it a formula.
+        ("tags", "'=x, =y")
+      ]
+
+testCsvifyEscapingSkipsNumbers :: IO ()
+testCsvifyEscapingSkipsNumbers = do
+  let config =
+        Map.fromList
+          [ ("balance", ColumnSettings Nothing Nothing Nothing True Nothing),
+            ("fee", ColumnSettings (Just 2) Nothing Nothing False Nothing)
+          ]
+      row =
+        Aeson.object
+          [ ("amount", Aeson.Number (-5)),
+            ("balance", Aeson.String "-5.25"),
+            ("fee", Aeson.String "-1.5"),
+            ("refunds", Aeson.toJSON [Aeson.Number (-1), Aeson.Number 2]),
+            ("approved", Aeson.Bool True)
+          ]
+  csvifyByHeaderWith escaping config "orders" row
+    @?= Map.fromList
+      [ ("amount", "-5"),
+        ("balance", "-5,25"),
+        ("fee", "-1,50"),
+        ("refunds", "-1, 2"),
+        ("approved", "True")
+      ]
+
+testCsvifyEscapesNonNumberInNumericColumn :: IO ()
+testCsvifyEscapesNonNumberInNumericColumn = do
+  let config = Map.fromList [("balance", ColumnSettings Nothing Nothing Nothing True Nothing)]
+  csvifyByHeaderWith escaping config "orders" (Aeson.object [("balance", Aeson.String "=1.5+1")])
+    @?= Map.fromList [("balance", "'=1.5+1")]
+
+testCsvRowBytesEscapedQuoting :: IO ()
+testCsvRowBytesEscapedQuoting =
+  csvRowBytes escaping mempty "orders" (Vector.fromList [ColumnKey "link" Nothing]) row
+    @?= "\"'=HYPERLINK(\"\"https://example.com\"\",\"\"x\"\")\"\r\n"
+  where
+    row = Aeson.object [("link", Aeson.String "=HYPERLINK(\"https://example.com\",\"x\")")]
+
+testEscapeFormula :: IO ()
+testEscapeFormula = do
+  escapeFormula "=1+1" @?= "'=1+1"
+  escapeFormula "@SUM(A1)" @?= "'@SUM(A1)"
+  escapeFormula "\n=1" @?= "'\n=1"
+  escapeFormula (encodeUtf8 "＠SUM(A1)") @?= encodeUtf8 "'＠SUM(A1)"
+  escapeFormula (encodeUtf8 "－1") @?= encodeUtf8 "'－1"
+  escapeFormula (encodeUtf8 "Ｓ1") @?= encodeUtf8 "Ｓ1"
+  escapeFormula "1+1" @?= "1+1"
+  escapeFormula " =1" @?= " =1"
+  escapeFormula "" @?= ""
 
 paymentRequestKeys :: Vector ColumnKey
 paymentRequestKeys = Vector.fromList [ColumnKey "payment_request_id" Nothing, ColumnKey "placed_at" Nothing]
@@ -1140,7 +1267,7 @@ testCsvRowBytesSharedHeader = do
       row = Aeson.object [("customer", Aeson.object [("billing", address "a@example.com"), ("shipping", address "b@example.com")])]
       fileColumns = inferColumns config root
   (.header) <$> fileColumns @?= ["Email", "Email"]
-  csvRowBytes config "orders" (Vector.fromList ((.key) <$> fileColumns)) row @?= "a@example.com,b@example.com\r\n"
+  csvRowBytes defaultCsvFormat config "orders" (Vector.fromList ((.key) <$> fileColumns)) row @?= "a@example.com,b@example.com\r\n"
 
 testExtractCursorMissingSelection :: IO ()
 testExtractCursorMissingSelection = do
@@ -1180,7 +1307,7 @@ testDecodeResponseRowsPassThrough = do
                 ]
             )
           ]
-  fmap (byHeader mempty) <$> decodeResponseRows mempty "orders" (Vector.fromList [ColumnKey "reference_col" Nothing, ColumnKey "amount_col" Nothing]) response
+  fmap (byHeader mempty) <$> decodeResponseRows defaultCsvFormat mempty "orders" (Vector.fromList [ColumnKey "reference_col" Nothing, ColumnKey "amount_col" Nothing]) response
     @?= Right (Vector.fromList [Map.fromList [("reference_col", "ref_001"), ("amount_col", "1500")]])
 
 testCsvifyNumericStringColumn :: IO ()

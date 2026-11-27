@@ -8,6 +8,13 @@ separately; see [docs/releases.md](../docs/releases.md).
 
 ### Breaking changes and how to migrate
 
+- **The CSV functions take a `CsvFormat`** (#24): `csvify`, `csvRowBytes`,
+  `decodeResponsePage`, `decodeResponsePageWith` and `decodeResponseRows` take it first;
+  `decodeResponseChunk` and `decodeResponseChunkWith` take it after the byte
+  limit. Pass `defaultCsvFormat` for the files they wrote before.
+- **Modules are renamed from `Kronor.SmartCsv.*` to `SmartCsv.*`** (#20), for
+  example `Kronor.SmartCsv.Flatten` to `SmartCsv.Flatten`. Only the names change:
+  replace the prefix in your imports.
 - **`Kronor.SmartCsv.Statements` is gone** (#16). The SQL statements moved into the
   runner; the library no longer depends on `hasql`. Hosts use their own statements.
 - **Cells are keyed by column, not by header** (#17). Headers need not be unique, so
@@ -43,6 +50,13 @@ separately; see [docs/releases.md](../docs/releases.md).
   `inferColumns` (#17).
 - `excelMaxColumns` and `checkColumnCount`, to refuse an Excel export with more
   columns than a sheet holds (#17).
+
+- `SmartCsv.CsvFormat` (#24): `CsvFormat` with `decimalSeparator`
+  (`DecimalComma`, the default, or `DecimalPoint`) and `escapeFormulas` (off by
+  default), which writes a text cell starting with `=`, `+`, `-`, `@`, a tab, a
+  carriage return, a line feed or a full-width `＝`, `＋`, `－` or `＠` with a
+  leading `'` so spreadsheets open it as text. Cells that
+  start with a number are never escaped. Excel files need neither setting.
 
 ## 0.1.0.0
 

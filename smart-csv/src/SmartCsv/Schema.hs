@@ -1,4 +1,4 @@
-module Kronor.SmartCsv.Schema
+module SmartCsv.Schema
   ( SchemaTypes (..),
     introspectionRequestBody,
     parseIntrospectionResponse,
@@ -13,10 +13,10 @@ import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
 import Data.Morpheus.Types.Internal.AST (RAW, Selection (..), SelectionContent (..), unpackName)
 import Data.Set qualified as Set
-import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnKey (..), ColumnSettings (..), OutputColumn (..), defaultColumnSettings, outputColumns)
-import Kronor.SmartCsv.Flatten (selectionOutputName)
 import RIO
 import RIO.List (find)
+import SmartCsv.ColumnConfig (ColumnConfig, ColumnKey (..), ColumnSettings (..), OutputColumn (..), defaultColumnSettings, outputColumns)
+import SmartCsv.Flatten (selectionOutputName)
 
 -- | The field types of every object type in the schema the export query runs
 -- against, keyed by type name and then field name.  List and non-null wrappers are
@@ -73,7 +73,7 @@ parseIntrospectionResponse = Aeson.Types.parseEither \value -> do
 
 -- | The columns whose printed value is a numeric scalar: a selected field's only
 -- column, or entries of its config's @columns@.  The leaf is found the way
--- 'Kronor.SmartCsv.Flatten.csvify' finds it: follow the column's dataPath, then
+-- 'SmartCsv.Flatten.csvify' finds it: follow the column's dataPath, then
 -- keep descending while the selection has a single field.
 numericColumns :: SchemaTypes -> ColumnConfig -> Selection RAW -> Set ColumnKey
 numericColumns schema colConfig rootSelection =

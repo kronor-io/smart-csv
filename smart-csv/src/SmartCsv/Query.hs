@@ -1,4 +1,4 @@
-module Kronor.SmartCsv.Query
+module SmartCsv.Query
   ( GenericQuery (..),
     DecodedResponsePage (..),
     EncodedResponsePage (..),
@@ -30,11 +30,12 @@ import Data.Csv.Builder qualified as Csv.Builder
 import Data.Map.Strict qualified as Map
 import Data.Scientific (Scientific)
 import Data.Vector qualified
-import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnKey)
-import Kronor.SmartCsv.Flatten (csvify)
-import Kronor.SmartCsv.Pagination (PaginationCursor, PaginationField)
-import Kronor.SmartCsv.Pagination qualified as SmartCsvPagination
 import RIO
+import SmartCsv.ColumnConfig (ColumnConfig, ColumnKey)
+import SmartCsv.CsvFormat (CsvFormat)
+import SmartCsv.Flatten (csvify)
+import SmartCsv.Pagination (PaginationCursor, PaginationField)
+import SmartCsv.Pagination qualified as SmartCsvPagination
 
 data GenericQuery
   = GenericQuery
@@ -94,29 +95,29 @@ applyOrderBy (Just orderBy) (Aeson.Object obj) = Aeson.Object (Aeson.KeyMap.inse
 applyOrderBy (Just _) queryVariables = queryVariables
 
 -- | Decode a full GraphQL response (all rows) from a strict 'ByteString'.
-decodeResponsePage :: ColumnConfig -> Text -> Vector ColumnKey -> ByteString -> Either String (Either ResponseError DecodedResponsePage)
-decodeResponsePage colConfig root columnKeys =
-  tokenDecodePage Nothing colConfig root columnKeys . LByteString.fromStrict
+decodeResponsePage :: CsvFormat -> ColumnConfig -> Text -> Vector ColumnKey -> ByteString -> Either String (Either ResponseError DecodedResponsePage)
+decodeResponsePage csvFormat colConfig root columnKeys =
+  tokenDecodePage Nothing csvFormat colConfig root columnKeys . LByteString.fromStrict
 
 -- | Decode rows until the encoded CSV reaches @maxChunkBytes@ (or the row array
 -- ends), from a strict 'ByteString'.
-decodeResponseChunk :: Int64 -> ColumnConfig -> Text -> Vector ColumnKey -> ByteString -> Either String (Either ResponseError DecodedResponsePage)
-decodeResponseChunk maxChunkBytes colConfig root columnKeys =
-  tokenDecodePage (Just maxChunkBytes) colConfig root columnKeys . LByteString.fromStrict
+decodeResponseChunk :: Int64 -> CsvFormat -> ColumnConfig -> Text -> Vector ColumnKey -> ByteString -> Either String (Either ResponseError DecodedResponsePage)
+decodeResponseChunk maxChunkBytes csvFormat colConfig root columnKeys =
+  tokenDecodePage (Just maxChunkBytes) csvFormat colConfig root columnKeys . LByteString.fromStrict
 
 -- | Streaming variant of 'decodeResponsePage' that pulls the response from a
 -- chunk reader (e.g. an HTTP body reader).  The body is read into a strict
 -- 'ByteString' while the connection is open, then decoded purely.
-decodeResponsePageWith :: ColumnConfig -> Text -> Vector ColumnKey -> IO ByteString -> IO (Either String (Either ResponseError DecodedResponsePage))
-decodeResponsePageWith colConfig root columnKeys readChunk =
-  decodeResponsePage colConfig root columnKeys <$> readAllChunks readChunk
+decodeResponsePageWith :: CsvFormat -> ColumnConfig -> Text -> Vector ColumnKey -> IO ByteString -> IO (Either String (Either ResponseError DecodedResponsePage))
+decodeResponsePageWith csvFormat colConfig root columnKeys readChunk =
+  decodeResponsePage csvFormat colConfig root columnKeys <$> readAllChunks readChunk
 
 -- | Streaming variant of 'decodeResponseChunk' that pulls the response from a
 -- chunk reader (e.g. an HTTP body reader).  The body is read into a strict
 -- 'ByteString' while the connection is open, then decoded purely.
-decodeResponseChunkWith :: Int64 -> ColumnConfig -> Text -> Vector ColumnKey -> IO ByteString -> IO (Either String (Either ResponseError DecodedResponsePage))
-decodeResponseChunkWith maxChunkBytes colConfig root columnKeys readChunk =
-  decodeResponseChunk maxChunkBytes colConfig root columnKeys <$> readAllChunks readChunk
+decodeResponseChunkWith :: Int64 -> CsvFormat -> ColumnConfig -> Text -> Vector ColumnKey -> IO ByteString -> IO (Either String (Either ResponseError DecodedResponsePage))
+decodeResponseChunkWith maxChunkBytes csvFormat colConfig root columnKeys readChunk =
+  decodeResponseChunk maxChunkBytes csvFormat colConfig root columnKeys <$> readAllChunks readChunk
 
 -- | Like 'decodeResponseChunkWith', but each row is written by @encodeRow@ instead
 -- of always as a CSV record.
@@ -125,17 +126,17 @@ encodeResponseChunkWith maxChunkBytes root encodeRow readChunk =
   tokenEncodePage (Just maxChunkBytes) root encodeRow . LByteString.fromStrict <$> readAllChunks readChunk
 
 -- | One response row as a CSV record, its fields in @columnKeys@ order (the
--- file's columns, see 'Kronor.SmartCsv.Pagination.inferColumns').
-csvRowBytes :: ColumnConfig -> Text -> Vector ColumnKey -> Aeson.Value -> LByteString
-csvRowBytes colConfig root columnKeys rowValue =
+-- file's columns, see 'SmartCsv.Pagination.inferColumns').
+csvRowBytes :: CsvFormat -> ColumnConfig -> Text -> Vector ColumnKey -> Aeson.Value -> LByteString
+csvRowBytes csvFormat colConfig root columnKeys rowValue =
   Builder.toLazyByteString (Csv.Builder.encodeRecordWith Csv.defaultEncodeOptions (cellOf <$> columnKeys))
   where
-    cells = csvify colConfig root rowValue
+    cells = csvify csvFormat colConfig root rowValue
     cellOf columnKey = Map.findWithDefault mempty columnKey cells
 
 -- | One response row's fields, with an empty one for each column it lacks.
-csvRow :: ColumnConfig -> Text -> Vector ColumnKey -> Aeson.Value -> Map ColumnKey Csv.Field
-csvRow colConfig root columnKeys rowValue = csvify colConfig root rowValue `Map.union` emptyRow
+csvRow :: CsvFormat -> ColumnConfig -> Text -> Vector ColumnKey -> Aeson.Value -> Map ColumnKey Csv.Field
+csvRow csvFormat colConfig root columnKeys rowValue = csvify csvFormat colConfig root rowValue `Map.union` emptyRow
   where
     emptyRow = Map.fromList ((,mempty) <$> toList columnKeys)
 
@@ -151,20 +152,21 @@ readAllChunks readChunk = go []
 
 tokenDecodePage ::
   Maybe Int64 ->
+  CsvFormat ->
   ColumnConfig ->
   Text ->
   Vector ColumnKey ->
   LByteString ->
   Either String (Either ResponseError DecodedResponsePage)
-tokenDecodePage mMaxChunkBytes colConfig root columnKeys lbs =
-  fmap (fmap withLastRow) (tokenEncodePage mMaxChunkBytes root (csvRowBytes colConfig root columnKeys) lbs)
+tokenDecodePage mMaxChunkBytes csvFormat colConfig root columnKeys lbs =
+  fmap (fmap withLastRow) (tokenEncodePage mMaxChunkBytes root (csvRowBytes csvFormat colConfig root columnKeys) lbs)
   where
     withLastRow page =
       DecodedResponsePage
         { encodedRows = page.encodedRows,
           encodedRowBytes = page.encodedRowBytes,
           rowCount = page.rowCount,
-          lastRow = csvRow colConfig root columnKeys <$> page.lastRawRow,
+          lastRow = csvRow csvFormat colConfig root columnKeys <$> page.lastRawRow,
           lastRawRow = page.lastRawRow
         }
 
@@ -293,14 +295,14 @@ numberToScientific = \case
   NumDecimal s -> s
   NumScientific s -> s
 
-decodeResponseRows :: ColumnConfig -> Text -> Vector ColumnKey -> Aeson.Value -> Either ResponseError (Vector (Map ColumnKey Csv.Field))
-decodeResponseRows colConfig root columnKeys (Aeson.Object responseObj) =
+decodeResponseRows :: CsvFormat -> ColumnConfig -> Text -> Vector ColumnKey -> Aeson.Value -> Either ResponseError (Vector (Map ColumnKey Csv.Field))
+decodeResponseRows csvFormat colConfig root columnKeys (Aeson.Object responseObj) =
   case Aeson.KeyMap.lookup "error" responseObj of
     Just (Aeson.String errMsg) -> Left (ResponseContainsError errMsg)
     _ -> case Aeson.KeyMap.lookup "data" responseObj of
       Nothing -> Left ResponseMissingData
       Just (Aeson.Object dataObj) -> case Aeson.KeyMap.lookup (Aeson.Key.fromText root) dataObj of
-        Just (Aeson.Array arr) -> Right (csvRow colConfig root columnKeys <$> arr)
+        Just (Aeson.Array arr) -> Right (csvRow csvFormat colConfig root columnKeys <$> arr)
         _ -> Left ResponseMissingRootData
       _ -> Left ResponseMissingData
-decodeResponseRows _ _ _ _ = Left ResponseMissingData
+decodeResponseRows _ _ _ _ _ = Left ResponseMissingData
