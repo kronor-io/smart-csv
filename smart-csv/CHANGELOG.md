@@ -8,9 +8,10 @@ separately; see [docs/releases.md](../docs/releases.md).
 
 ### Breaking changes and how to migrate
 
-- **The CSV functions take a `CsvFormat` first** (#24): `csvify`, `csvRowBytes`,
-  `decodeResponsePage`, `decodeResponseChunk`, their `With` variants and
-  `decodeResponseRows`. Pass `defaultCsvFormat` for the files they wrote before.
+- **The CSV functions take a `CsvFormat`** (#24): `csvify`, `csvRowBytes`,
+  `decodeResponsePage`, `decodeResponsePageWith` and `decodeResponseRows` take it first;
+  `decodeResponseChunk` and `decodeResponseChunkWith` take it after the byte
+  limit. Pass `defaultCsvFormat` for the files they wrote before.
 - **Modules are renamed from `Kronor.SmartCsv.*` to `SmartCsv.*`** (#20), for
   example `Kronor.SmartCsv.Flatten` to `SmartCsv.Flatten`. Only the names change:
   replace the prefix in your imports.
@@ -52,8 +53,9 @@ separately; see [docs/releases.md](../docs/releases.md).
 
 - `SmartCsv.CsvFormat` (#24): `CsvFormat` with `decimalSeparator`
   (`DecimalComma`, the default, or `DecimalPoint`) and `escapeFormulas` (off by
-  default), which writes a text cell starting with `=`, `+`, `-`, `@`, a tab or a
-  carriage return with a leading `'` so spreadsheets open it as text. Cells that
+  default), which writes a text cell starting with `=`, `+`, `-`, `@`, a tab, a
+  carriage return, a line feed or a full-width `＝`, `＋`, `－` or `＠` with a
+  leading `'` so spreadsheets open it as text. Cells that
   start with a number are never escaped. Excel files need neither setting.
 
 ## 0.1.0.0

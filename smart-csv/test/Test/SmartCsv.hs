@@ -106,6 +106,7 @@ tests =
       testCase "csvify leaves cells that look like formulas alone by default" testCsvifyNoEscapingByDefault,
       testCase "csvify escapes text cells that start like a formula" testCsvifyEscapesFormulas,
       testCase "csvify never escapes cells that start with a number" testCsvifyEscapingSkipsNumbers,
+      testCase "csvify escapes a string that isn't a number in a numeric column" testCsvifyEscapesNonNumberInNumericColumn,
       testCase "csvRowBytes quotes an escaped cell like any other" testCsvRowBytesEscapedQuoting,
       testCase "escapeFormula prefixes only cells that start with a formula character" testEscapeFormula,
       testCase "introspectionRequestBody is a valid GraphQL query" testIntrospectionRequestBodyParses,
@@ -1001,6 +1002,8 @@ testCsvifyEscapesFormulas = do
             ("at", Aeson.String "@user"),
             ("tab", Aeson.String "\tindented"),
             ("carriageReturn", Aeson.String "\rline"),
+            ("lineFeed", Aeson.String "\n=1+1"),
+            ("fullWidth", Aeson.String "＝1+1"),
             ("plain", Aeson.String "a = b"),
             ("empty", Aeson.String ""),
             ("tags", Aeson.toJSON [Aeson.String "=x", Aeson.String "=y"])
@@ -1013,6 +1016,8 @@ testCsvifyEscapesFormulas = do
         ("at", "'@user"),
         ("tab", "'\tindented"),
         ("carriageReturn", "'\rline"),
+        ("lineFeed", "'\n=1+1"),
+        ("fullWidth", encodeUtf8 "'＝1+1"),
         ("plain", "a = b"),
         ("empty", ""),
         -- Only the start of a cell makes it a formula.
@@ -1043,6 +1048,12 @@ testCsvifyEscapingSkipsNumbers = do
         ("approved", "True")
       ]
 
+testCsvifyEscapesNonNumberInNumericColumn :: IO ()
+testCsvifyEscapesNonNumberInNumericColumn = do
+  let config = Map.fromList [("balance", ColumnSettings Nothing Nothing Nothing True Nothing)]
+  csvifyByHeaderWith escaping config "orders" (Aeson.object [("balance", Aeson.String "=1.5+1")])
+    @?= Map.fromList [("balance", "'=1.5+1")]
+
 testCsvRowBytesEscapedQuoting :: IO ()
 testCsvRowBytesEscapedQuoting =
   csvRowBytes escaping mempty "orders" (Vector.fromList [ColumnKey "link" Nothing]) row
@@ -1054,6 +1065,10 @@ testEscapeFormula :: IO ()
 testEscapeFormula = do
   escapeFormula "=1+1" @?= "'=1+1"
   escapeFormula "@SUM(A1)" @?= "'@SUM(A1)"
+  escapeFormula "\n=1" @?= "'\n=1"
+  escapeFormula (encodeUtf8 "＠SUM(A1)") @?= encodeUtf8 "'＠SUM(A1)"
+  escapeFormula (encodeUtf8 "－1") @?= encodeUtf8 "'－1"
+  escapeFormula (encodeUtf8 "Ｓ1") @?= encodeUtf8 "Ｓ1"
   escapeFormula "1+1" @?= "1+1"
   escapeFormula " =1" @?= " =1"
   escapeFormula "" @?= ""

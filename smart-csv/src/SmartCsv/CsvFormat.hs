@@ -7,6 +7,7 @@ module SmartCsv.CsvFormat
   )
 where
 
+import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteString.Char8
 import Data.Csv qualified as Csv
 import RIO
@@ -45,9 +46,18 @@ withDecimalSeparator DecimalComma = map (\char -> if char == '.' then ',' else c
 
 -- | Prefix a cell with @'@ when it starts with a character that makes a
 -- spreadsheet read it as a formula: @=@, @+@, @-@, @\@@, a tab or a carriage
--- return (OWASP's list for CSV injection).  Spreadsheets hide the @'@ and show
--- the rest as text.
+-- return (OWASP's list for CSV injection), a line feed, or the full-width
+-- @＝@, @＋@, @－@ and @＠@ that some spreadsheets read as their ASCII
+-- counterparts.  Spreadsheets hide the @'@ and show the rest as text.
 escapeFormula :: Csv.Field -> Csv.Field
-escapeFormula field = case ByteString.Char8.uncons field of
-  Just (char, _) | char `elem` ['=', '+', '-', '@', '\t', '\r'] -> "'" <> field
-  _ -> field
+escapeFormula field
+  | startsWithFormulaChar = "'" <> field
+  | otherwise = field
+  where
+    startsWithFormulaChar =
+      maybe False ((`elem` ['=', '+', '-', '@', '\t', '\r', '\n']) . fst) (ByteString.Char8.uncons field)
+        || any (`ByteString.isPrefixOf` field) fullWidthPrefixes
+
+-- | ＝, ＋, － and ＠ (U+FF1D, U+FF0B, U+FF0D, U+FF20) in UTF-8.
+fullWidthPrefixes :: [ByteString]
+fullWidthPrefixes = ["\xEF\xBC\x9D", "\xEF\xBC\x8B", "\xEF\xBC\x8D", "\xEF\xBC\xA0"]

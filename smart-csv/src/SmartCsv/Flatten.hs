@@ -73,9 +73,12 @@ csvify csvFormat colConfig _ (Aeson.Object (Aeson.KeyMap.toMapText -> obj)) =
             Just sc -> Just (otherCell (formatNumeric column sc))
             Nothing -> Just (textCell (Csv.toField t))
         -- A number Hasura sent as a string keeps its own digits (the scale of the
-        -- database column), only the decimal point changes.
+        -- database column), only the decimal point changes.  A string that isn't
+        -- a number is text, even in a numeric column.
         Nothing
-          | column.numeric -> Just (otherCell (Csv.toField (withSeparator (Text.unpack t))))
+          | column.numeric,
+            Just (_ :: Scientific) <- readMaybe (Text.unpack t) ->
+              Just (otherCell (Csv.toField (withSeparator (Text.unpack t))))
           | otherwise -> Just (textCell (Csv.toField t))
     renderLeaf column (Aeson.Number sc) = Just (otherCell (formatNumeric column sc))
     renderLeaf _ (Aeson.Bool b) = Just (otherCell (if b then "True" else "False"))
