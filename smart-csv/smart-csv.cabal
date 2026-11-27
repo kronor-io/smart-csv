@@ -1,6 +1,6 @@
 cabal-version:      2.2
 name:               smart-csv
-version:            0.1.0.0
+version:            0.2.0.0
 description:        Smart CSV extraction primitives
 homepage:           https://github.com/kronor-io/smart-csv#readme
 bug-reports:        https://github.com/kronor-io/smart-csv/issues
@@ -11,6 +11,7 @@ license:            BSD-3-Clause
 license-file:       LICENSE
 build-type:         Simple
 extra-source-files: README.md
+extra-doc-files:    CHANGELOG.md
 
 source-repository head
   type:     git

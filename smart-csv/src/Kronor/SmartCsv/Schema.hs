@@ -9,10 +9,11 @@ where
 
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Types qualified as Aeson.Types
+import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
 import Data.Morpheus.Types.Internal.AST (RAW, Selection (..), SelectionContent (..), unpackName)
 import Data.Set qualified as Set
-import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnSettings (..), columnDataPath)
+import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnKey (..), ColumnSettings (..), OutputColumn (..), defaultColumnSettings, outputColumns)
 import Kronor.SmartCsv.Flatten (selectionOutputName)
 import RIO
 import RIO.List (find)
@@ -70,18 +71,19 @@ parseIntrospectionResponse = Aeson.Types.parseEither \value -> do
         Just name -> pure name
         Nothing -> typeObj Aeson..: "ofType" >>= parseNamedType
 
--- | Ids of the columns whose printed value is a numeric scalar.  The leaf is found
--- the way 'Kronor.SmartCsv.Flatten.csvify' finds it: follow the column's dataPath,
--- then keep descending while the selection has a single field.
-numericColumns :: SchemaTypes -> ColumnConfig -> Selection RAW -> Set Text
+-- | The columns whose printed value is a numeric scalar: a selected field's only
+-- column, or entries of its config's @columns@.  The leaf is found the way
+-- 'Kronor.SmartCsv.Flatten.csvify' finds it: follow the column's dataPath, then
+-- keep descending while the selection has a single field.
+numericColumns :: SchemaTypes -> ColumnConfig -> Selection RAW -> Set ColumnKey
 numericColumns schema colConfig rootSelection =
   case (rootSelection, fieldType schema.queryTypeName rootSelection) of
     (Selection {selectionContent = SelectionSet columns}, Just rowType) ->
       Set.fromList
-        [ columnId
+        [ output.key
         | column@Selection {} <- toList columns,
-          let columnId = selectionOutputName column,
-          Just leafType <- [leafTypeOf (columnDataPath columnId colConfig) rowType column],
+          output <- toList (outputColumns colConfig (selectionOutputName column)),
+          Just leafType <- [leafTypeOf output.dataPath rowType column],
           leafType `Set.member` numericScalars
         ]
     _ -> mempty
@@ -107,11 +109,28 @@ numericColumns schema colConfig rootSelection =
     fieldSelections :: (Foldable t) => t (Selection RAW) -> [Selection RAW]
     fieldSelections children = [child | child@Selection {} <- toList children]
 
--- | Flag the given columns as numeric, adding a default entry for a column the
--- config does not mention.
-markNumericColumns :: Set Text -> ColumnConfig -> ColumnConfig
-markNumericColumns columnIds colConfig =
-  foldl' (flip (Map.alter (Just . markNumeric))) colConfig (Set.toList columnIds)
+-- | Flag the given columns as numeric, adding a default entry for a field the
+-- config does not mention.  Each field's entries are gone through once, however
+-- many of them are numeric.
+markNumericColumns :: Set ColumnKey -> ColumnConfig -> ColumnConfig
+markNumericColumns numeric colConfig =
+  Map.foldlWithKey' markEntries (foldl' markField colConfig numericFields) numericEntries
   where
-    markNumeric mSettings =
-      (fromMaybe (ColumnSettings Nothing Nothing Nothing False) mSettings) {numeric = True}
+    numericFields = [columnId | ColumnKey columnId Nothing <- Set.toList numeric]
+    numericEntries = Map.fromListWith Set.union [(columnId, Set.singleton index) | ColumnKey columnId (Just index) <- Set.toList numeric]
+
+    markField config columnId = Map.alter (Just . setNumeric . fromMaybe defaultColumnSettings) columnId config
+
+    markEntries config columnId indices = Map.adjust (markEntriesOf indices) columnId config
+
+    markEntriesOf indices settings =
+      settings {columns = NonEmpty.zipWith (markAt indices) (0 :| [1 ..]) <$> settings.columns}
+
+    markAt indices index entry
+      | index `Set.member` indices = setNumeric entry
+      | otherwise = entry
+
+    -- Built field by field: OutputColumn has a 'numeric' field too, which makes a
+    -- record update ambiguous.
+    setNumeric (ColumnSettings decimals header dataPath _ columns) =
+      ColumnSettings decimals header dataPath True columns

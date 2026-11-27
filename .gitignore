@@ -6,3 +6,6 @@ result
 .claude/
 .cabal-fmt-*
 .pre-commit-config.yaml
+
+# zlib pkg-config flags that builds leave behind
+smart-csv/output

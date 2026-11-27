@@ -147,3 +147,4 @@ The integration test:
 - **Formatter**: fourmolu (configured in `fourmolu.yaml`)
 - **Linter**: hlint
 - **Language**: GHC2024 with extensions in `.cabal` files
+- **Library API**: a breaking change to an exported name or signature of the `smart-csv` library bumps its version (PVP) and gets a migration note in `smart-csv/CHANGELOG.md`

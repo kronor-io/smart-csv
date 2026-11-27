@@ -18,18 +18,18 @@ import Data.Morpheus.Types.Internal.AST (RAW, Selection (..), SelectionContent (
 import Data.Scientific (FPFormat (Fixed), Scientific, formatScientific, scientific)
 import Data.Text qualified as Text
 import Data.Vector qualified
-import Kronor.SmartCsv.ColumnConfig (ColumnConfig, columnDataPath, columnDecimalPlaces, columnHeader, columnIsNumeric)
+import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnKey, OutputColumn (..), outputColumns)
 import RIO
 
--- | Convert one GraphQL response row into a flat CSV field map.
--- Each top-level key in the JSON object becomes a column keyed by its CSV header
--- (resolved via 'columnHeader').  Scalar values are used directly; nested objects
--- and arrays are resolved using the 'dataPath' from the column config (see
--- 'columnDataPath').  Arrays are serialised by rendering every element and
--- joining them with commas.
-csvify :: ColumnConfig -> Text -> Aeson.Value -> Map Text Csv.Field
+-- | Convert one GraphQL response row into flat CSV fields, keyed by column (see
+-- 'ColumnKey'; headers need not be unique).  Each top-level key in the JSON
+-- object prints the columns 'outputColumns' gives it: usually one, or one per
+-- entry of its config's @columns@.  Scalar values are used directly; nested
+-- objects and arrays are resolved using each column's data path.  Arrays are
+-- serialised by rendering every element and joining them with commas.
+csvify :: ColumnConfig -> Text -> Aeson.Value -> Map ColumnKey Csv.Field
 csvify colConfig _ (Aeson.Object (Aeson.KeyMap.toMapText -> obj)) =
-  Map.unions $ mapMaybe extractColumn (Map.toList obj)
+  Map.unions $ concatMap extractColumns (Map.toList obj)
   where
     withCommaDecimalSeparator :: String -> String
     withCommaDecimalSeparator = map $ \char -> if char == '.' then ',' else char
@@ -40,52 +40,50 @@ csvify colConfig _ (Aeson.Object (Aeson.KeyMap.toMapText -> obj)) =
           truncated = truncate (sc * factor) :: Integer
        in scientific truncated (negate decimals)
 
-    singletonField :: Text -> Csv.Field -> Map Text Csv.Field
-    singletonField columnId value =
-      Map.singleton (columnHeader columnId colConfig) value
-
-    formatNumeric :: Text -> Scientific -> Csv.Field
-    formatNumeric columnId scientificValue =
-      case columnDecimalPlaces columnId colConfig of
+    formatNumeric :: OutputColumn -> Scientific -> Csv.Field
+    formatNumeric column scientificValue =
+      case column.decimalPlaces of
         Just decimals ->
           Csv.toField $ withCommaDecimalSeparator $ formatScientific Fixed (Just decimals) (truncateScientific decimals scientificValue)
         Nothing
           | truncateScientific 0 scientificValue == scientificValue -> Csv.toField (truncate scientificValue :: Integer)
           | otherwise -> Csv.toField $ withCommaDecimalSeparator $ formatScientific Fixed Nothing scientificValue
 
-    renderLeaf :: Text -> Aeson.Value -> Maybe Csv.Field
-    renderLeaf columnId (Aeson.String t) =
-      case columnDecimalPlaces columnId colConfig of
+    renderLeaf :: OutputColumn -> Aeson.Value -> Maybe Csv.Field
+    renderLeaf column (Aeson.String t) =
+      case column.decimalPlaces of
         Just _ ->
           case readMaybe (Text.unpack t) :: Maybe Scientific of
-            Just sc -> Just (formatNumeric columnId sc)
+            Just sc -> Just (formatNumeric column sc)
             Nothing -> Just (Csv.toField t)
         -- A number Hasura sent as a string keeps its own digits (the scale of the
         -- database column), only the decimal point changes.
         Nothing
-          | columnIsNumeric columnId colConfig -> Just (Csv.toField (withCommaDecimalSeparator (Text.unpack t)))
+          | column.numeric -> Just (Csv.toField (withCommaDecimalSeparator (Text.unpack t)))
           | otherwise -> Just (Csv.toField t)
-    renderLeaf columnId (Aeson.Number sc) = Just (formatNumeric columnId sc)
+    renderLeaf column (Aeson.Number sc) = Just (formatNumeric column sc)
     renderLeaf _ (Aeson.Bool b) = Just (if b then "True" else "False")
     renderLeaf _ Aeson.Null = Just mempty
     renderLeaf _ (Aeson.Array _) = Nothing
     renderLeaf _ (Aeson.Object _) = Nothing
 
-    renderValue :: Text -> [Text] -> Aeson.Value -> Maybe Csv.Field
-    renderValue columnId path (Aeson.Array array) =
+    renderValue :: OutputColumn -> Aeson.Value -> Maybe Csv.Field
+    renderValue column (Aeson.Array array) =
       let renderedItems = mapMaybe renderArrayItem (toList array)
        in Just (ByteString.Char8.intercalate ", " renderedItems)
       where
         renderArrayItem Aeson.Null = Nothing
         renderArrayItem value = do
-          rendered <- renderValue columnId path value
+          rendered <- renderValue column value
           if ByteString.Char8.null rendered then Nothing else Just rendered
-    renderValue columnId path value = resolveValue path value >>= renderLeaf columnId
+    renderValue column value = resolveValue column.dataPath value >>= renderLeaf column
 
-    extractColumn :: (Text, Aeson.Value) -> Maybe (Map Text Csv.Field)
-    extractColumn (columnId, value) = do
-      fieldValue <- renderValue columnId (columnDataPath columnId colConfig) value
-      pure (singletonField columnId fieldValue)
+    extractColumns :: (Text, Aeson.Value) -> [Map ColumnKey Csv.Field]
+    extractColumns (columnId, value) =
+      [ Map.singleton column.key field
+      | column <- toList (outputColumns colConfig columnId),
+        Just field <- [renderValue column value]
+      ]
 csvify _ _ v = error ("csvify: expected a JSON object, but received: " <> show v)
 
 -- | Follow a column's data path down to the scalar it prints.  An array resolves
