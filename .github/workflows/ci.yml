@@ -139,15 +139,37 @@ jobs:
           persist-credentials: false
           # Full history, so the tagged commit can be checked against main.
           fetch-depth: 0
-      # A v* tag moves :latest, which deployments follow without choosing to upgrade,
-      # so it may only release a commit that is on main.
-      - name: Check the release tag is on main
-        if: startsWith(github.ref, 'refs/tags/v')
+      # Checked before anything is built or pushed.
+      - name: Check the release tag
         run: |
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::$GITHUB_REF_NAME points at a commit that is not on main. Only main is released as a version; tag a pre-release rc-* instead."
-            exit 1
-          fi
+          case "$GITHUB_REF_NAME" in
+            v*)
+              # A version is v<major>.<minor>.<patch>, so its image tag (1.2.3) can
+              # never be a pre-release's (rc-...).
+              if ! [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                echo "::error::$GITHUB_REF_NAME is not a version tag: use v<major>.<minor>.<patch>, for example v1.2.3."
+                exit 1
+              fi
+              # It moves :latest, which deployments follow without choosing to
+              # upgrade, so it may only release a commit that is on main. The full
+              # ref, so that a tag named origin/main can't stand in for the branch.
+              if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+                echo "::error::$GITHUB_REF_NAME points at a commit that is not on main. Only main is released as a version; tag a pre-release rc-* instead."
+                exit 1
+              fi
+              ;;
+            rc-*)
+              # The tag name becomes the image tag, so it must be a valid Docker tag.
+              if ! [[ "$GITHUB_REF_NAME" =~ ^rc-[A-Za-z0-9_.-]{1,125}$ ]]; then
+                echo "::error::$GITHUB_REF_NAME can't be an image tag: after rc-, use only letters, digits, _ . and -, at most 125 characters."
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::Unexpected release tag $GITHUB_REF_NAME"
+              exit 1
+              ;;
+          esac
       - uses: cachix/install-nix-action@96951a368ba55167b55f1c916f7d416bac6505fe # v31.10.3
       - uses: cachix/cachix-action@1eb2ef646ac0255473d23a5907ad7b04ce94065c # v17
         with:

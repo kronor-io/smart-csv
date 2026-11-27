@@ -6,7 +6,18 @@
 | Tag | Image tags pushed | Allowed on |
 |-----|-------------------|------------|
 | `v1.2.3` | `1.2.3` and `latest` | a commit on `main` only; the release job fails otherwise |
-| `rc-<anything>` | `rc-<anything>` only | any commit, typically on the `kronor` branch |
+| `rc-<name>` | `rc-<name>` only | any commit that has this release job, typically on the `kronor` branch |
+
+The release job checks the tag before it builds anything:
+
+- A version tag is `v<major>.<minor>.<patch>` and nothing else, so a version's image tag can never be
+  a pre-release's.
+- A pre-release's name becomes its image tag as it is, so after `rc-` it may only use letters,
+  digits, `_`, `.` and `-`, at most 125 characters (Docker's limit is 128).
+
+GitHub runs the workflow of the tagged commit. A branch cut from `main` before pre-releases existed
+has a workflow that ignores `rc-*` tags, and its tag publishes nothing: merge `main` into that branch
+first, then tag.
 
 ## Why `v*` tags are restricted
 
