@@ -1,11 +1,8 @@
 module Kronor.SmartCsv.ColumnConfig
   ( ColumnConfig,
     ColumnSettings (..),
+    ColumnKey (..),
     OutputColumn (..),
-    columnDataPath,
-    columnDecimalPlaces,
-    columnHeader,
-    columnIsNumeric,
     defaultColumnSettings,
     outputColumns,
     parseColumnConfig,
@@ -42,10 +39,18 @@ data ColumnSettings = ColumnSettings
 defaultColumnSettings :: ColumnSettings
 defaultColumnSettings = ColumnSettings Nothing Nothing Nothing False Nothing
 
+-- | Which column of the file a cell belongs to: the selected field (or alias),
+-- and for a field with 'columns' the entry's position.  Unlike a header it is
+-- unique, so cells are keyed by it and two columns that share a header keep
+-- their own values.
+data ColumnKey = ColumnKey Text (Maybe Int)
+  deriving stock (Eq, Ord, Show)
+
 -- | One column of the file.  A selected field gives one, or one per entry of its
 -- 'columns'.
 data OutputColumn = OutputColumn
-  { -- | The selected field (or alias) the column's value comes from.
+  { key :: ColumnKey,
+    -- | The selected field (or alias) the column's value comes from.
     columnId :: Text,
     header :: Text,
     dataPath :: [Text],
@@ -59,21 +64,23 @@ data OutputColumn = OutputColumn
 outputColumns :: ColumnConfig -> Text -> NonEmpty OutputColumn
 outputColumns colConfig columnId =
   case Map.lookup columnId colConfig of
-    Just ColumnSettings {columns = Just entries} -> entryColumn <$> entries
+    Just ColumnSettings {columns = Just entries} -> NonEmpty.zipWith entryColumn (0 :| [1 ..]) entries
     mSettings -> pure (fieldColumn (fromMaybe defaultColumnSettings mSettings))
   where
     fieldColumn settings =
       OutputColumn
-        { columnId,
+        { key = ColumnKey columnId Nothing,
+          columnId,
           header = fromMaybe columnId settings.header,
           dataPath = splitDataPath settings.dataPath,
           decimalPlaces = settings.decimalPlaces,
           numeric = settings.numeric
         }
 
-    entryColumn entry =
+    entryColumn index entry =
       OutputColumn
-        { columnId,
+        { key = ColumnKey columnId (Just index),
+          columnId,
           header = fromMaybe (Text.intercalate "." (columnId : splitDataPath entry.dataPath)) entry.header,
           dataPath = splitDataPath entry.dataPath,
           decimalPlaces = entry.decimalPlaces,
@@ -91,14 +98,17 @@ parseColumnConfig (Aeson.Object obj) =
     parseEntry (k, value) =
       fmap ((Aeson.Key.toText k),) (Aeson.Types.parseMaybe parseSettings value)
 
+    -- A field with 'columns' prints only its entries, so its own settings are not
+    -- read: one that does not parse cannot drop the entries.
     parseSettings =
       Aeson.withObject "ColumnSettings" $ \settings -> do
-        ownSettings <- parseOwnSettings settings
         mEntries <- settings Aeson..:? "columns"
-        entries <- for mEntries $ \case
-          [] -> fail "columns must list at least one column"
-          entry : rest -> traverse (Aeson.withObject "column" parseOwnSettings) (entry :| rest)
-        pure ownSettings {columns = entries}
+        case mEntries of
+          Nothing -> parseOwnSettings settings
+          Just [] -> fail "columns must list at least one column"
+          Just (entry : rest) -> do
+            entries <- traverse (Aeson.withObject "column" parseOwnSettings) (entry :| rest)
+            pure defaultColumnSettings {columns = Just entries}
 
     parseOwnSettings settings =
       ColumnSettings
@@ -108,26 +118,6 @@ parseColumnConfig (Aeson.Object obj) =
         <*> pure False
         <*> pure Nothing
 parseColumnConfig _ = Map.empty
-
--- | The header of the field's single column, or of its first one when it has
--- 'columns'.
-columnHeader :: Text -> ColumnConfig -> Text
-columnHeader columnId colConfig = (NonEmpty.head (outputColumns colConfig columnId)).header
-
-columnDecimalPlaces :: Text -> ColumnConfig -> Maybe Int
-columnDecimalPlaces columnId colConfig = do
-  settings <- Map.lookup columnId colConfig
-  settings.decimalPlaces
-
-columnIsNumeric :: Text -> ColumnConfig -> Bool
-columnIsNumeric columnId colConfig =
-  maybe False (.numeric) (Map.lookup columnId colConfig)
-
-columnDataPath :: Text -> ColumnConfig -> [Text]
-columnDataPath columnId colConfig =
-  splitDataPath $ do
-    settings <- Map.lookup columnId colConfig
-    settings.dataPath
 
 splitDataPath :: Maybe Text -> [Text]
 splitDataPath = maybe [] (filter (not . Text.null) . Text.splitOn ".")

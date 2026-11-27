@@ -40,7 +40,7 @@ import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Text
 import Data.Text.Unsafe qualified as Text.Unsafe
-import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnSettings (..), OutputColumn (..), outputColumns)
+import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnKey, OutputColumn (..), outputColumns)
 import Kronor.SmartCsv.Deflate (SegmentEnd (..), crc32, deflateSegment)
 import Kronor.SmartCsv.Flatten (resolveValue)
 import Numeric (showHex)
@@ -67,17 +67,15 @@ data Leaf
   | LeafBool Bool
   | LeafNull
 
--- | Convert one GraphQL response row into cells keyed by header, the way
+-- | Convert one GraphQL response row into cells keyed by column, the way
 -- 'Kronor.SmartCsv.Flatten.csvify' does for CSV: the same data paths, array
 -- joining and decimal places, but numbers stay numbers.
-xlsxify :: ColumnConfig -> Aeson.Value -> Map Text XlsxCell
+xlsxify :: ColumnConfig -> Aeson.Value -> Map ColumnKey XlsxCell
 xlsxify colConfig (Aeson.Object obj) =
-  -- The first column wins when two share a header, as in 'csvify'.
-  Map.fromListWith (\_ firstCell -> firstCell)
-    $ concatMap extractColumns (Aeson.KeyMap.toList obj)
+  Map.fromList $ concatMap extractColumns (Aeson.KeyMap.toList obj)
   where
     extractColumns (key, value) =
-      [ (column.header, cell)
+      [ (column.key, cell)
       | column <- toList (outputColumns colConfig (Aeson.Key.toText key)),
         Just cell <- [renderValue column value]
       ]
@@ -198,9 +196,10 @@ mkXlsxStyles colConfig =
   where
     -- Negative decimal places truncate to tens, hundreds, ... and show none, as in
     -- CSV; more than Excel can show leave the cells as text (see 'leafCell').
-    decimalsUsed = Set.toAscList (Set.fromList (filter (<= excelMaxDecimalPlaces) (mapMaybe (fmap (max 0)) (concatMap columnDecimals (Map.elems colConfig)))))
-    -- A field's own decimal places, and those of the entries of its @columns@.
-    columnDecimals settings = settings.decimalPlaces : maybe [] (map (.decimalPlaces) . toList) settings.columns
+    decimalsUsed = Set.toAscList (Set.fromList (filter (<= excelMaxDecimalPlaces) (mapMaybe (fmap (max 0)) columnDecimals)))
+    -- The decimal places of the columns the config's fields print: a field's own,
+    -- or those of the entries of its @columns@.
+    columnDecimals = [column.decimalPlaces | columnId <- Map.keys colConfig, column <- toList (outputColumns colConfig columnId)]
     formats = zip [164 :: Int ..] decimalsUsed
     formatCode decimals = "#,##0" <> (if decimals == 0 then "" else "." <> Builder.string7 (replicate decimals '0'))
     xml =
@@ -228,15 +227,17 @@ mkXlsxStyles colConfig =
         <> "</styleSheet>"
 
 -- | One response row as a sheet row, its cells in @headers@ order.
-xlsxRowBytes :: ColumnConfig -> XlsxStyles -> Vector Text -> Aeson.Value -> LByteString
-xlsxRowBytes colConfig styles headers rowValue =
-  Builder.toLazyByteString (rowXml styles headers (xlsxify colConfig rowValue))
+-- | One response row as a sheet row, its cells in @columnKeys@ order (the file's
+-- columns, see 'Kronor.SmartCsv.Pagination.inferColumns').
+xlsxRowBytes :: ColumnConfig -> XlsxStyles -> Vector ColumnKey -> Aeson.Value -> LByteString
+xlsxRowBytes colConfig styles columnKeys rowValue =
+  Builder.toLazyByteString (rowXml styles columnKeys (xlsxify colConfig rowValue))
 
 -- | Rows and cells carry no positions (@r="B7"@): every cell is written, an
 -- empty one as @<c/>@, so each lands in the column after the previous one.
-rowXml :: XlsxStyles -> Vector Text -> Map Text XlsxCell -> Builder
-rowXml styles headers cells =
-  "<row>" <> foldMap (\header -> cellXml styles (Map.findWithDefault CellEmpty header cells)) headers <> "</row>"
+rowXml :: XlsxStyles -> Vector ColumnKey -> Map ColumnKey XlsxCell -> Builder
+rowXml styles columnKeys cells =
+  "<row>" <> foldMap (\columnKey -> cellXml styles (Map.findWithDefault CellEmpty columnKey cells)) columnKeys <> "</row>"
 
 headerRowXml :: XlsxStyles -> Vector Text -> Builder
 headerRowXml styles headers = "<row>" <> foldMap (cellXml styles . CellText) headers <> "</row>"

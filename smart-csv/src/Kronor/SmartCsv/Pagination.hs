@@ -4,8 +4,8 @@ module Kronor.SmartCsv.Pagination
     PaginationDirection (..),
     PaginationField (..),
     encodePaginationCursor,
-    extractCursor,
     extractCursorValue,
+    inferColumns,
     inferHeaders,
     parseOrderByFields,
     resolvePaginationFields,
@@ -16,12 +16,11 @@ where
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as Aeson.Key
 import Data.Aeson.KeyMap qualified as Aeson.KeyMap
-import Data.Csv qualified as Csv
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
 import Data.Scientific (FPFormat (Fixed), floatingOrInteger, formatScientific)
 import Data.Morpheus.Types.Internal.AST (RAW, Selection (..), SelectionContent (..), unpackName)
-import Kronor.SmartCsv.ColumnConfig (ColumnConfig, OutputColumn (..), columnHeader, outputColumns)
+import Kronor.SmartCsv.ColumnConfig (ColumnConfig, OutputColumn (..), outputColumns)
 import Kronor.SmartCsv.Flatten (gatherSelectionNames, selectionOutputName)
 import RIO
 import RIO.Text qualified as Text
@@ -45,26 +44,21 @@ newtype PaginationCursor = PaginationCursor
   }
   deriving stock (Eq, Show)
 
--- | The file's headers, in query order: each selected field's columns, one or
--- one per entry of its config's @columns@.
-inferHeaders :: ColumnConfig -> Selection RAW -> [Text]
-inferHeaders colConfig rootSelection =
-  [ column.header
+-- | The file's columns, in query order: each selected field's, one or one per
+-- entry of its config's @columns@.
+inferColumns :: ColumnConfig -> Selection RAW -> [OutputColumn]
+inferColumns colConfig rootSelection =
+  [ column
   | columnId <- gatherSelectionNames rootSelection,
     column <- toList (outputColumns colConfig columnId)
   ]
 
-extractCursor :: ColumnConfig -> Selection RAW -> NonEmpty PaginationField -> Map Text Csv.Field -> Either CursorError PaginationCursor
-extractCursor colConfig rootSelection paginationFields row = do
-  cursorEntries <-
-    for (toList paginationFields) $ \PaginationField {paginationFieldName} -> do
-      columnId <- maybe (Left (CursorColumnMissing paginationFieldName)) Right (findColumnId (paginationFieldPath paginationFieldName) rootSelection)
-      let cursorColumn = columnHeader columnId colConfig
-      case row Map.!? cursorColumn of
-        Nothing -> Left (CursorValueMissing cursorColumn)
-        Just cursor -> Right (paginationFieldName, decodeUtf8Lenient cursor)
-  pure (PaginationCursor (Map.fromList cursorEntries))
+-- | The headers of 'inferColumns'.  Two columns can share a header.
+inferHeaders :: ColumnConfig -> Selection RAW -> [Text]
+inferHeaders colConfig rootSelection = (.header) <$> inferColumns colConfig rootSelection
 
+-- | The next page's cursor, read from the raw response row along each pagination
+-- field's path, so it does not depend on which columns the file prints.
 extractCursorValue :: Selection RAW -> NonEmpty PaginationField -> Aeson.Value -> Either CursorError PaginationCursor
 extractCursorValue rootSelection paginationFields rowValue = do
   cursorEntries <-
@@ -119,24 +113,6 @@ paginationFieldPath fieldName =
   case filter (not . Text.null) (Text.split (== '.') fieldName) of
     [] -> fieldName :| []
     pathPart : rest -> pathPart :| rest
-
-findColumnId :: NonEmpty Text -> Selection RAW -> Maybe Text
-findColumnId _ InlineFragment {} = Nothing
-findColumnId _ Spread {} = Nothing
-findColumnId targetPath sel@(Selection {}) =
-  case sel.selectionContent of
-    SelectionSet sss ->
-      asum
-        [ case child of
-            Selection {}
-              | unpackName child.selectionName == NonEmpty.head targetPath ->
-                  case NonEmpty.nonEmpty (NonEmpty.tail targetPath) of
-                    Nothing -> Just (selectionOutputName child)
-                    Just remainingPath -> selectionOutputName child <$ findColumnId remainingPath child
-            _ -> Nothing
-          | child <- toList sss
-        ]
-    _ -> Nothing
 
 findResponsePath :: NonEmpty Text -> Selection RAW -> Maybe (NonEmpty Text)
 findResponsePath _ InlineFragment {} = Nothing

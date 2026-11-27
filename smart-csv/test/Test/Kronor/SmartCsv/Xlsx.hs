@@ -1,4 +1,4 @@
-module Test.Kronor.SmartCsv.Xlsx (tests) where
+module Test.Kronor.SmartCsv.Xlsx (tests, byHeader) where
 
 import Codec.Compression.Zlib.Raw qualified as Raw
 import Data.Aeson qualified as Aeson
@@ -9,7 +9,7 @@ import Data.ByteString.Lazy qualified as LByteString
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as Text
 import Data.Vector qualified as Vector
-import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnSettings (..), defaultColumnSettings)
+import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnKey (..), ColumnSettings (..), OutputColumn (..), defaultColumnSettings, outputColumns)
 import Kronor.SmartCsv.Deflate (SegmentEnd (..), crc32, deflateSegment)
 import Kronor.SmartCsv.Xlsx (SheetEntry (..), XlsxCell (..), appendRows, finishArchive, mkXlsxStyles, sheetNameFor, startArchive, xlsxRowBytes, xlsxify)
 import RIO
@@ -31,6 +31,7 @@ tests =
       testCase "xlsxify keeps decimal places of numbers joined from an array" testXlsxifyNumberArrays,
       testCase "xlsxify prints each entry of columns like a column of its own" testXlsxifyColumns,
       testCase "xlsxRowBytes writes every cell so empty ones keep their column" testRowBytes,
+      testCase "xlsxRowBytes keeps each column's value when two share a header" testRowBytesSharedHeader,
       testCase "xlsxRowBytes escapes markup and characters XML cannot hold" testEscaping,
       testCase "sheetNameFor makes a valid sheet name" testSheetName,
       testCase "an archive built page by page reads back as a valid ZIP" testArchiveRoundTrip
@@ -66,7 +67,7 @@ testXlsxifyNumbers = do
             ("approved", Aeson.Bool True),
             ("memo", Aeson.Null)
           ]
-  xlsxify numberConfig row
+  xlsxifyByHeader numberConfig row
     @?= Map.fromList
       [ ("id", CellNumber "7" Nothing),
         ("Amount", CellNumber "12.34" (Just 2)),
@@ -85,7 +86,7 @@ testXlsxifyPrecision = do
             ("rate", Aeson.String "0.12345678901234567"),
             ("big", Aeson.Number 1e20)
           ]
-  xlsxify numberConfig row
+  xlsxifyByHeader numberConfig row
     @?= Map.fromList
       [ ("id", CellText "1234567890123456789"),
         ("Amount", CellText "12345678901234.56"),
@@ -99,14 +100,14 @@ testXlsxifyManyDecimalPlaces = do
       row = Aeson.object [("tiny", Aeson.Number 1.9e-31)]
   -- The value keeps the 31 places it was truncated to, as in the CSV file; an
   -- Excel number format shows at most 30, so the cell is text.
-  xlsxify config row @?= Map.fromList [("tiny", CellText "0.0000000000000000000000000000001")]
-  xlsxRowBytes config (mkXlsxStyles config) (Vector.fromList ["tiny"]) row
+  xlsxifyByHeader config row @?= Map.fromList [("tiny", CellText "0.0000000000000000000000000000001")]
+  xlsxRowBytes config (mkXlsxStyles config) (fieldKeys ["tiny"]) row
     @?= "<row><c t=\"inlineStr\"><is><t>0.0000000000000000000000000000001</t></is></c></row>"
 
 testXlsxifyNegativeDecimalPlaces :: IO ()
 testXlsxifyNegativeDecimalPlaces = do
   let config = Map.fromList [("rounded", ColumnSettings (Just (-2)) Nothing Nothing False Nothing)]
-  xlsxify config (Aeson.object [("rounded", Aeson.Number 1234.5)])
+  xlsxifyByHeader config (Aeson.object [("rounded", Aeson.Number 1234.5)])
     @?= Map.fromList [("rounded", CellNumber "1200" (Just 0))]
 
 testXlsxifyPathsAndArrays :: IO ()
@@ -123,7 +124,7 @@ testXlsxifyPathsAndArrays = do
             ("customer", Aeson.object [("profile", Aeson.object [("email", "ada@example.com"), ("name", "Ada")])]),
             ("tags", Aeson.Array Vector.empty)
           ]
-  xlsxify config row
+  xlsxifyByHeader config row
     @?= Map.fromList
       [ ("Card Type", CellText "VISA, MC"),
         ("Customer Email", CellText "ada@example.com"),
@@ -155,15 +156,15 @@ testXlsxifyColumns = do
             ("balance", entry "Balance" "balance" (Just 2)),
             ("tags", entry "Tags" "tags" Nothing)
           ]
-      headers = Vector.fromList ["Name", "Balance", "Tags"]
+      fanOutKeys = Vector.fromList (ColumnKey "customer" . Just <$> [0, 1, 2])
       fanOutRow = Aeson.object [("customer", customer)]
       separateRow = Aeson.object [("name", customer), ("balance", customer), ("tags", customer)]
   -- An array met along a data path resolves through its first element, as it
   -- does for any column; only a field that is itself an array is joined.
-  xlsxify fanOut fanOutRow
+  xlsxifyByHeader fanOut fanOutRow
     @?= Map.fromList [("Name", CellText "Ada"), ("Balance", CellNumber "1234.56" (Just 2)), ("Tags", CellText "a")]
-  xlsxRowBytes fanOut (mkXlsxStyles fanOut) headers fanOutRow
-    @?= xlsxRowBytes separate (mkXlsxStyles separate) headers separateRow
+  xlsxRowBytes fanOut (mkXlsxStyles fanOut) fanOutKeys fanOutRow
+    @?= xlsxRowBytes separate (mkXlsxStyles separate) (fieldKeys ["name", "balance", "tags"]) separateRow
 
 testXlsxifyNumberArrays :: IO ()
 testXlsxifyNumberArrays = do
@@ -179,7 +180,7 @@ testXlsxifyNumberArrays = do
             ("rates", numbers [Aeson.String "0.50", Aeson.String "1"]),
             ("counts", numbers [Aeson.Number 1, Aeson.Number 2.5, numbers [Aeson.Number 3]])
           ]
-  xlsxify config row
+  xlsxifyByHeader config row
     @?= Map.fromList
       [ ("amounts", CellText "12.30, 4.50, 7.89"),
         ("rates", CellText "0.50, 1"),
@@ -189,17 +190,24 @@ testXlsxifyNumberArrays = do
 testRowBytes :: IO ()
 testRowBytes = do
   let styles = mkXlsxStyles numberConfig
-      headers = Vector.fromList ["reference", "memo", "Amount", "approved"]
       row = Aeson.object [("reference", "x"), ("amount", Aeson.Number 1.5), ("approved", Aeson.Bool False)]
-  xlsxRowBytes numberConfig styles headers row
+  xlsxRowBytes numberConfig styles (fieldKeys ["reference", "memo", "amount", "approved"]) row
     @?= "<row><c t=\"inlineStr\"><is><t>x</t></is></c><c/><c s=\"1\"><v>1.5</v></c><c t=\"b\"><v>0</v></c></row>"
+
+testRowBytesSharedHeader :: IO ()
+testRowBytesSharedHeader = do
+  let email dataPath = ColumnSettings Nothing (Just "Email") (Just dataPath) False Nothing
+      config = Map.fromList [("customer", defaultColumnSettings {columns = Just (email "billing.email" :| [email "shipping.email"])})]
+      address value = Aeson.object [("email", Aeson.String value)]
+      row = Aeson.object [("customer", Aeson.object [("billing", address "a@example.com"), ("shipping", address "b@example.com")])]
+  xlsxRowBytes config (mkXlsxStyles config) (Vector.fromList [ColumnKey "customer" (Just 0), ColumnKey "customer" (Just 1)]) row
+    @?= "<row><c t=\"inlineStr\"><is><t>a@example.com</t></is></c><c t=\"inlineStr\"><is><t>b@example.com</t></is></c></row>"
 
 testEscaping :: IO ()
 testEscaping = do
   let styles = mkXlsxStyles mempty
-      headers = Vector.fromList ["a", "b"]
       row = Aeson.object [("a", "1 < 2 & 3 > 2\v_x0041_ \8364"), ("b", " padded")]
-  xlsxRowBytes mempty styles headers row
+  xlsxRowBytes mempty styles (fieldKeys ["a", "b"]) row
     @?= LByteString.fromStrict
       ( encodeUtf8
           "<row><c t=\"inlineStr\"><is><t>1 &lt; 2 &amp; 3 &gt; 2_x000B__x005F_x0041_ \8364</t></is></c>\
@@ -217,7 +225,7 @@ testArchiveRoundTrip :: IO ()
 testArchiveRoundTrip = do
   let styles = mkXlsxStyles numberConfig
       headers = Vector.fromList ["reference", "Amount"]
-      rowBytes reference amount = xlsxRowBytes numberConfig styles headers (Aeson.object [("reference", reference), ("amount", Aeson.Number amount)])
+      rowBytes reference amount = xlsxRowBytes numberConfig styles (fieldKeys ["reference", "amount"]) (Aeson.object [("reference", reference), ("amount", Aeson.Number amount)])
       firstPage = rowBytes "a" 1 <> rowBytes "b" 2
       secondPage = rowBytes "c" 3
   (prefix, archive, entry0) <- startArchive 6 "payments" styles headers
@@ -243,6 +251,22 @@ testArchiveRoundTrip = do
     <> "</sheetData></worksheet>"
   let workbookXml = maybe "" (.contents) (find ((== "xl/workbook.xml") . (.name)) entries)
   ByteString.Char8.isInfixOf "<sheet name=\"payments\"" (LByteString.toStrict workbookXml) @?= True
+
+-- | A row's cells by header, for assertions that read like the file.  Only for
+-- configs whose headers are unique: cells are keyed by column because headers
+-- need not be.
+byHeader :: ColumnConfig -> Map ColumnKey a -> Map Text a
+byHeader config cells = Map.fromList [(headerOf columnKey, cell) | (columnKey, cell) <- Map.toList cells]
+  where
+    headerOf (ColumnKey columnId mIndex) =
+      maybe columnId (.header) (listToMaybe (drop (fromMaybe 0 mIndex) (toList (outputColumns config columnId))))
+
+xlsxifyByHeader :: ColumnConfig -> Aeson.Value -> Map Text XlsxCell
+xlsxifyByHeader config row = byHeader config (xlsxify config row)
+
+-- | The keys of fields that print one column each.
+fieldKeys :: [Text] -> Vector ColumnKey
+fieldKeys = Vector.fromList . map (`ColumnKey` Nothing)
 
 numberConfig :: ColumnConfig
 numberConfig =

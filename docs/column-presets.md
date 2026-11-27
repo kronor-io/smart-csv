@@ -101,7 +101,9 @@ columns in that order, where `customer` is in the query.
 - An entry without `header` is headed by the field and its data path, for example
   `customer.email`.
 - With `columns`, the field's own `header`, `dataPath` and `decimalPlaces` are not
-  used.
+  used, or even read: an invalid one does not affect the entries.
+- Entries may share a header (two `Email` columns, say); each column still prints
+  its own value. The same holds for separate fields that share a header.
 - An empty `columns` list makes the whole entry invalid, so the field prints as if
   it had no config.
 - `detectNumericColumns` checks each entry on its own.

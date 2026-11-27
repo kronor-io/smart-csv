@@ -18,16 +18,16 @@ import Data.Morpheus.Types.Internal.AST (RAW, Selection (..), SelectionContent (
 import Data.Scientific (FPFormat (Fixed), Scientific, formatScientific, scientific)
 import Data.Text qualified as Text
 import Data.Vector qualified
-import Kronor.SmartCsv.ColumnConfig (ColumnConfig, OutputColumn (..), outputColumns)
+import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnKey, OutputColumn (..), outputColumns)
 import RIO
 
--- | Convert one GraphQL response row into a flat CSV field map, keyed by header.
--- Each top-level key in the JSON object prints the columns 'outputColumns' gives
--- it: usually one, or one per entry of its config's @columns@.  Scalar values are
--- used directly; nested objects and arrays are resolved using each column's data
--- path.  Arrays are serialised by rendering every element and joining them with
--- commas.  When two columns share a header, the first one wins.
-csvify :: ColumnConfig -> Text -> Aeson.Value -> Map Text Csv.Field
+-- | Convert one GraphQL response row into flat CSV fields, keyed by column (see
+-- 'ColumnKey'; headers need not be unique).  Each top-level key in the JSON
+-- object prints the columns 'outputColumns' gives it: usually one, or one per
+-- entry of its config's @columns@.  Scalar values are used directly; nested
+-- objects and arrays are resolved using each column's data path.  Arrays are
+-- serialised by rendering every element and joining them with commas.
+csvify :: ColumnConfig -> Text -> Aeson.Value -> Map ColumnKey Csv.Field
 csvify colConfig _ (Aeson.Object (Aeson.KeyMap.toMapText -> obj)) =
   Map.unions $ concatMap extractColumns (Map.toList obj)
   where
@@ -78,9 +78,9 @@ csvify colConfig _ (Aeson.Object (Aeson.KeyMap.toMapText -> obj)) =
           if ByteString.Char8.null rendered then Nothing else Just rendered
     renderValue column value = resolveValue column.dataPath value >>= renderLeaf column
 
-    extractColumns :: (Text, Aeson.Value) -> [Map Text Csv.Field]
+    extractColumns :: (Text, Aeson.Value) -> [Map ColumnKey Csv.Field]
     extractColumns (columnId, value) =
-      [ Map.singleton column.header field
+      [ Map.singleton column.key field
       | column <- toList (outputColumns colConfig columnId),
         Just field <- [renderValue column value]
       ]
