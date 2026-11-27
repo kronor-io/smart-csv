@@ -113,6 +113,12 @@ direnv exec . cabal test all
 
 The integration tests create temporary tables in Hasura, insert test data, call the REST API, wait for the worker to generate a CSV, download it from S3, verify the contents, and clean up.
 
+The golden-file tests (`Test.SmartCsvRunner.Golden`) compare the files the runner writes, CSV byte for byte and every entry of an Excel file, with the ones in `smart-csv-runner/test/golden`. A change to the output therefore shows up as a test failure. After an intended change, record the new files with `SMART_CSV_ACCEPT_GOLDEN=1` and review the diff:
+
+```bash
+SMART_CSV_ACCEPT_GOLDEN=1 direnv exec . cabal test smart-csv-runner-test --test-option="--pattern=golden"
+```
+
 ## API
 
 ### `GET /health`
