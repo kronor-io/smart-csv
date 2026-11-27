@@ -23,7 +23,8 @@ first, then tag.
 
 Deployments follow `:latest`, and they don't choose when to upgrade: every `v*` tag reaches them
 as soon as it is pushed. A version must therefore leave their output and behaviour unchanged unless
-the change has been agreed with them first. In practice, for anything tagged:
+the change has been agreed with them first. In practice, before tagging a `v*` version (an `rc-*`
+pre-release reaches no deployment on its own, so it may try anything):
 
 - Don't change the `smart_csv.generated_csv` or `smart_csv.smart_graphql_csv_generator` columns, the
   `INITIALIZED` / `DONE` / `ERROR` statuses, the stored `token_claims` shape, the `csv_report_flow`
