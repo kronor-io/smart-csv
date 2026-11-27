@@ -7,7 +7,7 @@
 -- of its own that ends with a full flush, so the segments join into one deflate
 -- stream and only 'SheetEntry' (a checksum and two byte counts) carries over from
 -- page to page.
-module Kronor.SmartCsv.Xlsx
+module SmartCsv.Xlsx
   ( -- * Cells
     XlsxCell (..),
     xlsxify,
@@ -42,11 +42,11 @@ import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Text
 import Data.Text.Unsafe qualified as Text.Unsafe
-import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnKey, OutputColumn (..), outputColumns)
-import Kronor.SmartCsv.Deflate (SegmentEnd (..), crc32, deflateSegment)
-import Kronor.SmartCsv.Flatten (resolveValue)
 import Numeric (showHex)
 import RIO
+import SmartCsv.ColumnConfig (ColumnConfig, ColumnKey, OutputColumn (..), outputColumns)
+import SmartCsv.Deflate (SegmentEnd (..), crc32, deflateSegment)
+import SmartCsv.Flatten (resolveValue)
 
 -- * Cells
 
@@ -70,7 +70,7 @@ data Leaf
   | LeafNull
 
 -- | Convert one GraphQL response row into cells keyed by column, the way
--- 'Kronor.SmartCsv.Flatten.csvify' does for CSV: the same data paths, array
+-- 'SmartCsv.Flatten.csvify' does for CSV: the same data paths, array
 -- joining and decimal places, but numbers stay numbers.
 xlsxify :: ColumnConfig -> Aeson.Value -> Map ColumnKey XlsxCell
 xlsxify colConfig (Aeson.Object obj) =
@@ -230,7 +230,7 @@ mkXlsxStyles colConfig =
 
 -- | One response row as a sheet row, its cells in @headers@ order.
 -- | One response row as a sheet row, its cells in @columnKeys@ order (the file's
--- columns, see 'Kronor.SmartCsv.Pagination.inferColumns').
+-- columns, see 'SmartCsv.Pagination.inferColumns').
 xlsxRowBytes :: ColumnConfig -> XlsxStyles -> Vector ColumnKey -> Aeson.Value -> LByteString
 xlsxRowBytes colConfig styles columnKeys rowValue =
   Builder.toLazyByteString (rowXml styles columnKeys (xlsxify colConfig rowValue))

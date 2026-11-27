@@ -1,4 +1,4 @@
-module Test.Kronor.SmartCsv (main) where
+module Test.SmartCsv (main) where
 
 import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as KeyMap
@@ -10,24 +10,24 @@ import Data.Morpheus.Internal.Ext (Result (..))
 import Data.Morpheus.Types.IO (GQLRequest (..))
 import Data.Morpheus.Types.Internal.AST (ExecutableDocument (..), Operation (..), RAW, Selection)
 import Data.Vector qualified as Vector
-import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnKey (..), ColumnSettings (..), defaultColumnSettings, parseColumnConfig)
+import SmartCsv.ColumnConfig (ColumnConfig, ColumnKey (..), ColumnSettings (..), defaultColumnSettings, parseColumnConfig)
 -- OutputColumn's fields, for .header and .key: unqualified they would make record
 -- updates of ColumnSettings ambiguous.
-import Kronor.SmartCsv.ColumnConfig qualified as ColumnConfig
-import Kronor.SmartCsv.ErrorHandling (ErrorAction (..), classifyCursorError, classifyHttpStatusError, classifyJsonDecodeError, classifyResponseError, classifyTokenClaimsError)
-import Kronor.SmartCsv.Flatten (csvify, gatherSelectionNames)
-import Kronor.SmartCsv.Notification (CompletionEmail (..), EnqueueMeta (..), defaultEnqueueMeta, mkCompletionEmail)
-import Kronor.SmartCsv.Pagination (CursorError (..), PaginationCursor (..), PaginationDirection (..), PaginationField (..), extractCursorValue, inferColumns, inferHeaders)
-import Kronor.SmartCsv.Schema (SchemaTypes (..), introspectionRequestBody, markNumericColumns, numericColumns, parseIntrospectionResponse)
-import Kronor.SmartCsv.Query (DecodedResponsePage (..), GenericQuery (..), ResponseError (..), buildRequestBody, csvRowBytes, decodeResponseChunk, decodeResponsePage, decodeResponseRows, decodedResponsePageBytes, resolvePaginationFields, resolvePaginationKey)
-import Kronor.SmartCsv.TokenClaims (HasuraRoleError (..), ParsedTokenClaims (..), TokenClaimsError (..), parseTokenClaims, selectHasuraRole)
-import Kronor.SmartCsv.Validation qualified as SmartCsvValidation
 import RIO
 import RIO.ByteString.Lazy qualified as LByteString
 import RIO.List (headMaybe)
 import RIO.Set qualified as Set
-import Test.Kronor.SmartCsv.Xlsx (byHeader)
-import Test.Kronor.SmartCsv.Xlsx qualified
+import SmartCsv.ColumnConfig qualified as ColumnConfig
+import SmartCsv.ErrorHandling (ErrorAction (..), classifyCursorError, classifyHttpStatusError, classifyJsonDecodeError, classifyResponseError, classifyTokenClaimsError)
+import SmartCsv.Flatten (csvify, gatherSelectionNames)
+import SmartCsv.Notification (CompletionEmail (..), EnqueueMeta (..), defaultEnqueueMeta, mkCompletionEmail)
+import SmartCsv.Pagination (CursorError (..), PaginationCursor (..), PaginationDirection (..), PaginationField (..), extractCursorValue, inferColumns, inferHeaders)
+import SmartCsv.Query (DecodedResponsePage (..), GenericQuery (..), ResponseError (..), buildRequestBody, csvRowBytes, decodeResponseChunk, decodeResponsePage, decodeResponseRows, decodedResponsePageBytes, resolvePaginationFields, resolvePaginationKey)
+import SmartCsv.Schema (SchemaTypes (..), introspectionRequestBody, markNumericColumns, numericColumns, parseIntrospectionResponse)
+import SmartCsv.TokenClaims (HasuraRoleError (..), ParsedTokenClaims (..), TokenClaimsError (..), parseTokenClaims, selectHasuraRole)
+import SmartCsv.Validation qualified as SmartCsvValidation
+import Test.SmartCsv.Xlsx (byHeader)
+import Test.SmartCsv.Xlsx qualified
 import Test.Tasty (TestTree, defaultMain, testGroup)
 import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
 
@@ -114,7 +114,7 @@ tests =
       testCase "extractCursorValue returns error when pagination field is not selected" testExtractCursorMissingSelection,
       testCase "extractCursorValue reads the cursor whatever columns the file prints" testExtractCursorIgnoresColumns,
       testCase "decodeResponseRows with empty config uses alias ids" testDecodeResponseRowsPassThrough,
-      Test.Kronor.SmartCsv.Xlsx.tests
+      Test.SmartCsv.Xlsx.tests
     ]
 
 testCsvify :: IO ()

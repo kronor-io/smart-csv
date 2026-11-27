@@ -1,4 +1,4 @@
-module Kronor.SmartCsv.Query
+module SmartCsv.Query
   ( GenericQuery (..),
     DecodedResponsePage (..),
     EncodedResponsePage (..),
@@ -30,11 +30,11 @@ import Data.Csv.Builder qualified as Csv.Builder
 import Data.Map.Strict qualified as Map
 import Data.Scientific (Scientific)
 import Data.Vector qualified
-import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnKey)
-import Kronor.SmartCsv.Flatten (csvify)
-import Kronor.SmartCsv.Pagination (PaginationCursor, PaginationField)
-import Kronor.SmartCsv.Pagination qualified as SmartCsvPagination
 import RIO
+import SmartCsv.ColumnConfig (ColumnConfig, ColumnKey)
+import SmartCsv.Flatten (csvify)
+import SmartCsv.Pagination (PaginationCursor, PaginationField)
+import SmartCsv.Pagination qualified as SmartCsvPagination
 
 data GenericQuery
   = GenericQuery
@@ -125,7 +125,7 @@ encodeResponseChunkWith maxChunkBytes root encodeRow readChunk =
   tokenEncodePage (Just maxChunkBytes) root encodeRow . LByteString.fromStrict <$> readAllChunks readChunk
 
 -- | One response row as a CSV record, its fields in @columnKeys@ order (the
--- file's columns, see 'Kronor.SmartCsv.Pagination.inferColumns').
+-- file's columns, see 'SmartCsv.Pagination.inferColumns').
 csvRowBytes :: ColumnConfig -> Text -> Vector ColumnKey -> Aeson.Value -> LByteString
 csvRowBytes colConfig root columnKeys rowValue =
   Builder.toLazyByteString (Csv.Builder.encodeRecordWith Csv.defaultEncodeOptions (cellOf <$> columnKeys))

@@ -69,18 +69,18 @@ common common-component-settings
 library
   import: common-component-settings
   exposed-modules:
-    Kronor.SmartCsv.ColumnConfig
-    Kronor.SmartCsv.Deflate
-    Kronor.SmartCsv.ErrorHandling
-    Kronor.SmartCsv.ExportFormat
-    Kronor.SmartCsv.Flatten
-    Kronor.SmartCsv.Notification
-    Kronor.SmartCsv.Pagination
-    Kronor.SmartCsv.Query
-    Kronor.SmartCsv.Schema
-    Kronor.SmartCsv.TokenClaims
-    Kronor.SmartCsv.Validation
-    Kronor.SmartCsv.Xlsx
+    SmartCsv.ColumnConfig
+    SmartCsv.Deflate
+    SmartCsv.ErrorHandling
+    SmartCsv.ExportFormat
+    SmartCsv.Flatten
+    SmartCsv.Notification
+    SmartCsv.Pagination
+    SmartCsv.Query
+    SmartCsv.Schema
+    SmartCsv.TokenClaims
+    SmartCsv.Validation
+    SmartCsv.Xlsx
 
   other-modules:    Paths_smart_csv
   hs-source-dirs:   src
@@ -102,9 +102,9 @@ library
 test-suite smart-csv-test
   import: common-component-settings
   type:             exitcode-stdio-1.0
-  ghc-options:      -main-is Test.Kronor.SmartCsv.main
-  main-is:          Test/Kronor/SmartCsv.hs
-  other-modules:    Test.Kronor.SmartCsv.Xlsx
+  ghc-options:      -main-is Test.SmartCsv.main
+  main-is:          Test/SmartCsv.hs
+  other-modules:    Test.SmartCsv.Xlsx
   hs-source-dirs:   test
   build-depends:
       aeson

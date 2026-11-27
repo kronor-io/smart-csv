@@ -1,6 +1,6 @@
 {-# LANGUAGE ViewPatterns #-}
 
-module Kronor.SmartCsv.Flatten
+module SmartCsv.Flatten
   ( csvify,
     gatherSelectionNames,
     resolveValue,
@@ -18,8 +18,8 @@ import Data.Morpheus.Types.Internal.AST (RAW, Selection (..), SelectionContent (
 import Data.Scientific (FPFormat (Fixed), Scientific, formatScientific, scientific)
 import Data.Text qualified as Text
 import Data.Vector qualified
-import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnKey, OutputColumn (..), outputColumns)
 import RIO
+import SmartCsv.ColumnConfig (ColumnConfig, ColumnKey, OutputColumn (..), outputColumns)
 
 -- | Convert one GraphQL response row into flat CSV fields, keyed by column (see
 -- 'ColumnKey'; headers need not be unique).  Each top-level key in the JSON
