@@ -33,6 +33,7 @@ import RIO.List (headMaybe)
 import RIO.Vector qualified as Vector
 import SmartCsv.ColumnConfig (ColumnConfig, OutputColumn (..))
 import SmartCsv.ColumnConfig qualified as SmartCsvColumnConfig
+import SmartCsv.CsvFormat (defaultCsvFormat)
 import SmartCsv.ErrorHandling qualified as SmartCsvErrorHandling
 import SmartCsv.ExportFormat (ExportFormat (..))
 import SmartCsv.ExportFormat qualified as ExportFormat
@@ -143,7 +144,7 @@ generateCSV payload = do
         (fetchPage, filePrefix, maxRows) <- case exportFormat of
           Csv -> do
             pure
-              ( fetchRows (SmartCsvQuery.csvRowBytes columnConfig inferredRoot fileColumnKeys),
+              ( fetchRows (SmartCsvQuery.csvRowBytes defaultCsvFormat columnConfig inferredRoot fileColumnKeys),
                 Builder.toLazyByteString (Csv.Builder.encodeHeader (encodeUtf8 <$> fileHeaders)),
                 options.optionsCsvGenerationMaxRows
               )
