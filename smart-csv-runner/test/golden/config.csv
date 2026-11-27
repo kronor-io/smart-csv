@@ -1,6 +1,6 @@
 Order ID,Reference,Amount,Rate,Customer Email,Line Prices
 1,A-1,"10,50","0,100",ada@example.com,"5,25, 5,25"
 4,=SUM(A1:A2),"99999999,99","123456,789",ada@example.com,"99999999,99, -0,01"
-3,"quote ""inside""","0,00","0,000",asa@example.se,"0,10"
 2,"B, with comma","-1234,56","2,500",bob@example.com,
 5,+46 70 123,"1,10",,bob@example.com,
+3,"quote ""inside""","0,00","0,000",asa@example.se,"0,10"

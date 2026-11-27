@@ -23,7 +23,7 @@ import Hasql.Session qualified
 import Hasql.TH (singletonStatement)
 import Network.HTTP.Simple qualified as HTTP
 import RIO
-import RIO.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, listDirectory, removePathForcibly)
+import RIO.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, listDirectory, pathIsSymbolicLink, removePathForcibly)
 import RIO.FilePath (makeRelative, takeDirectory, (</>))
 import System.Environment (lookupEnv)
 import System.Process (readProcessWithExitCode)
@@ -147,23 +147,37 @@ goldenExport pool name format requestBody = do
   case format of
     Csv -> compareFile ("test/golden" </> goldenName) bytes
     -- The ZIP's compressed bytes depend on the zlib build, so compare what it
-    -- holds: every entry, after Info-ZIP's unzip has checked the archive.
+    -- holds: its entry names, then every entry, after Info-ZIP's unzip has checked
+    -- the archive.
     Xlsx -> withSystemTempDirectory "smart-csv-golden" \directory -> do
       let xlsxPath = directory </> "export.xlsx"
           extracted = directory </> "entries"
+          goldenDir = "test/golden" </> goldenName
       writeFileBinary xlsxPath bytes
-      runUnzip ["-tq", xlsxPath]
-      runUnzip ["-q", xlsxPath, "-d", extracted]
-      compareDirectory ("test/golden" </> goldenName) extracted
+      void $ runUnzip ["-tq", xlsxPath]
+      -- Extracting hides some changes to the entry list, such as an added
+      -- directory entry (xl/), so check the names the archive itself lists.
+      entryNames <- List.sort . lines <$> runUnzip ["-Z1", xlsxPath]
+      accept <- acceptGolden
+      unless accept $ do
+        expectedNames <- filesUnderIfExists goldenDir
+        unless (entryNames == expectedNames)
+          $ assertFailure [i|The file's entries are #{entryNames}, but #{goldenDir} holds #{expectedNames}|]
+      void $ runUnzip ["-q", xlsxPath, "-d", extracted]
+      compareDirectory goldenDir extracted
 
-runUnzip :: [String] -> IO ()
+-- | Run Info-ZIP's unzip and return what it printed.
+runUnzip :: [String] -> IO String
 runUnzip arguments = do
   (exitCode, out, err) <- readProcessWithExitCode "unzip" arguments ""
   unless (exitCode == ExitSuccess)
     $ assertFailure [i|unzip #{unwords arguments} failed (#{exitCode}): #{out}#{err}|]
+  pure out
 
+-- | Record the golden files instead of comparing them, with
+-- @SMART_CSV_ACCEPT_GOLDEN=1@ only: any other value compares as usual.
 acceptGolden :: IO Bool
-acceptGolden = isJust <$> lookupEnv "SMART_CSV_ACCEPT_GOLDEN"
+acceptGolden = (== Just "1") <$> lookupEnv "SMART_CSV_ACCEPT_GOLDEN"
 
 compareFile :: FilePath -> ByteString -> IO ()
 compareFile goldenPath actual = do
@@ -183,21 +197,29 @@ compareDirectory goldenDir actualDir = do
   accept <- acceptGolden
   when accept $ removePathForcibly goldenDir
   actualFiles <- filesUnder actualDir
-  expectedFiles <- do
-    exists <- doesDirectoryExist goldenDir
-    if exists then filesUnder goldenDir else pure []
+  expectedFiles <- filesUnderIfExists goldenDir
   unless (accept || expectedFiles == actualFiles)
     $ assertFailure [i|#{goldenDir} holds #{expectedFiles}, but the file holds #{actualFiles}|]
   for_ actualFiles \path -> readFileBinary (actualDir </> path) >>= compareFile (goldenDir </> path)
 
+-- | The files under a directory, relative to it and sorted.  A symbolic link
+-- fails the test: an archive entry must be a file, and following a link could
+-- leave the directory.
 filesUnder :: FilePath -> IO [FilePath]
 filesUnder root = List.sort . map (makeRelative root) <$> go root
   where
     go path = do
+      isLink <- pathIsSymbolicLink path
+      when isLink $ assertFailure [i|#{path} is a symbolic link|]
       isDirectory <- doesDirectoryExist path
       if isDirectory
         then concat <$> (listDirectory path >>= traverse (go . (path </>)))
         else pure [path]
+
+filesUnderIfExists :: FilePath -> IO [FilePath]
+filesUnderIfExists root = do
+  exists <- doesDirectoryExist root
+  if exists then filesUnder root else pure []
 
 -- | Where the files first differ, with some context on both sides.
 describeDifference :: FilePath -> ByteString -> ByteString -> String
@@ -216,10 +238,18 @@ Run with SMART_CSV_ACCEPT_GOLDEN=1 to record the new output if the change is int
 goldenTables :: [Text]
 goldenTables = ["golden_line", "golden_order", "golden_customer"]
 
+-- | Create the fixture tables and track them in Hasura.  If any step fails, what
+-- was created is removed again, since Tasty only cleans up a resource it got.
 setupFixture :: IO Hasql.Pool.Pool
 setupFixture = do
   pool <- mkPool
-  dropFixture pool
+  createFixture pool `onException` (dropFixture Lenient pool `finally` Hasql.Pool.release pool)
+  pure pool
+
+createFixture :: Hasql.Pool.Pool -> IO ()
+createFixture pool = do
+  -- Left over from a run that was killed before its cleanup.
+  dropFixture Lenient pool
   runSession pool $ Hasql.Session.sql (encodeUtf8 fixtureSql)
   for_ (reverse goldenTables) \table -> do
     hasura "pg_track_table" ["table" Aeson..= tableRef table]
@@ -247,7 +277,6 @@ setupFixture = do
       "using" Aeson..= Aeson.object ["foreign_key_constraint_on" Aeson..= Aeson.object ["table" Aeson..= tableRef "golden_line", "column" Aeson..= ("order_id" :: Text)]]
     ]
   threadDelay 500_000 -- let Hasura reload its schema
-  pure pool
   where
     tableRef :: Text -> Aeson.Value
     tableRef table = Aeson.object ["schema" Aeson..= ("smart_csv" :: Text), "name" Aeson..= table]
@@ -260,33 +289,48 @@ setupFixture = do
         $ assertFailure [i|Hasura #{operation} failed (#{status}): #{decodeUtf8Lenient (LBS.toStrict (HTTP.getResponseBody response))}|]
 
 cleanupFixture :: Hasql.Pool.Pool -> IO ()
-cleanupFixture pool = dropFixture pool >> Hasql.Pool.release pool
+cleanupFixture pool = dropFixture Strict pool `finally` Hasql.Pool.release pool
 
-dropFixture :: Hasql.Pool.Pool -> IO ()
-dropFixture pool = do
-  for_ goldenTables \table ->
-    void
-      $ postHasuraMetadata
-      $ Aeson.object
-        [ "type" Aeson..= ("pg_untrack_table" :: Text),
-          "args"
-            Aeson..= Aeson.object
-              [ "source" Aeson..= ("default" :: Text),
-                "table" Aeson..= Aeson.object ["schema" Aeson..= ("smart_csv" :: Text), "name" Aeson..= table],
-                "cascade" Aeson..= True
-              ]
-        ]
-  void $ Hasql.Pool.use pool $ Hasql.Session.sql "DROP TABLE IF EXISTS smart_csv.golden_line, smart_csv.golden_order, smart_csv.golden_customer"
+-- | Whether removing the fixture may find parts of it missing: before setup it
+-- usually is, after the tests every part must be removed.
+data Strictness = Lenient | Strict
+
+dropFixture :: Strictness -> Hasql.Pool.Pool -> IO ()
+dropFixture strictness pool = do
+  for_ goldenTables \table -> do
+    response <-
+      postHasuraMetadata
+        $ Aeson.object
+          [ "type" Aeson..= ("pg_untrack_table" :: Text),
+            "args"
+              Aeson..= Aeson.object
+                [ "source" Aeson..= ("default" :: Text),
+                  "table" Aeson..= Aeson.object ["schema" Aeson..= ("smart_csv" :: Text), "name" Aeson..= table],
+                  "cascade" Aeson..= True
+                ]
+          ]
+    let status = HTTP.getResponseStatusCode response
+    case strictness of
+      Strict
+        | status /= 200 ->
+            assertFailure [i|Hasura pg_untrack_table #{table} failed (#{status}): #{decodeUtf8Lenient (LBS.toStrict (HTTP.getResponseBody response))}|]
+      _ -> pure ()
+  result <- Hasql.Pool.use pool $ Hasql.Session.sql "DROP TABLE IF EXISTS smart_csv.golden_line, smart_csv.golden_order, smart_csv.golden_customer"
+  case result of
+    Left err -> assertFailure [i|Dropping the fixture tables failed: #{show err}|]
+    Right () -> pure ()
 
 -- | Values that tend to break files: separators, quotes and line breaks in text,
 -- a leading formula character, non-ASCII names, an empty string next to nulls,
 -- negative and very large numbers, a bigint past 2^53, tiny and long floats.
+-- Customer names sort byte by byte (COLLATE "C"), so the configured exports,
+-- which order by customer name, don't depend on the database's locale.
 fixtureSql :: Text
 fixtureSql =
   "CREATE TABLE smart_csv.golden_customer (\
   \  id int PRIMARY KEY,\
   \  shard_id bigint NOT NULL,\
-  \  name text NOT NULL,\
+  \  name text COLLATE \"C\" NOT NULL,\
   \  email text NOT NULL,\
   \  balance numeric(12,2) NOT NULL\
   \);\
