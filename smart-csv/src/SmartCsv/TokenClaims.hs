@@ -1,4 +1,4 @@
-module Kronor.SmartCsv.TokenClaims (
+module SmartCsv.TokenClaims (
     ParsedTokenClaims (..),
     TokenClaimsError (..),
     HasuraRoleError (..),

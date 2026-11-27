@@ -8,6 +8,9 @@ separately; see [docs/releases.md](../docs/releases.md).
 
 ### Breaking changes and how to migrate
 
+- **Modules are renamed from `Kronor.SmartCsv.*` to `SmartCsv.*`** (#20), for
+  example `Kronor.SmartCsv.Flatten` to `SmartCsv.Flatten`. Only the names change:
+  replace the prefix in your imports.
 - **`Kronor.SmartCsv.Statements` is gone** (#16). The SQL statements moved into the
   runner; the library no longer depends on `hasql`. Hosts use their own statements.
 - **Cells are keyed by column, not by header** (#17). Headers need not be unique, so

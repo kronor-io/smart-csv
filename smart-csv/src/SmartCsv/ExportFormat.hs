@@ -1,4 +1,4 @@
-module Kronor.SmartCsv.ExportFormat
+module SmartCsv.ExportFormat
   ( ExportFormat (..),
     exportFormatContentType,
     exportFormatExtension,

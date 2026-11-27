@@ -1,4 +1,4 @@
-module Kronor.SmartCsv.Pagination
+module SmartCsv.Pagination
   ( CursorError (..),
     PaginationCursor (..),
     PaginationDirection (..),
@@ -18,12 +18,12 @@ import Data.Aeson.Key qualified as Aeson.Key
 import Data.Aeson.KeyMap qualified as Aeson.KeyMap
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
-import Data.Scientific (FPFormat (Fixed), floatingOrInteger, formatScientific)
 import Data.Morpheus.Types.Internal.AST (RAW, Selection (..), SelectionContent (..), unpackName)
-import Kronor.SmartCsv.ColumnConfig (ColumnConfig, OutputColumn (..), outputColumns)
-import Kronor.SmartCsv.Flatten (gatherSelectionNames, selectionOutputName)
+import Data.Scientific (FPFormat (Fixed), floatingOrInteger, formatScientific)
 import RIO
 import RIO.Text qualified as Text
+import SmartCsv.ColumnConfig (ColumnConfig, OutputColumn (..), outputColumns)
+import SmartCsv.Flatten (gatherSelectionNames, selectionOutputName)
 
 data CursorError
   = CursorColumnMissing Text

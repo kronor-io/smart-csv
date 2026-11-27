@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Kronor.SmartCsv.ErrorHandling (
+module SmartCsv.ErrorHandling (
     ErrorAction (..),
     classifyResponseError,
     classifyCursorError,
@@ -9,10 +9,10 @@ module Kronor.SmartCsv.ErrorHandling (
     classifyHttpStatusError,
 ) where
 
-import Kronor.SmartCsv.Pagination (CursorError (..))
-import Kronor.SmartCsv.Query (ResponseError (..))
-import Kronor.SmartCsv.TokenClaims (TokenClaimsError (..))
 import RIO
+import SmartCsv.Pagination (CursorError (..))
+import SmartCsv.Query (ResponseError (..))
+import SmartCsv.TokenClaims (TokenClaimsError (..))
 
 
 -- | ErrorAction represents the decision made for handling an error.

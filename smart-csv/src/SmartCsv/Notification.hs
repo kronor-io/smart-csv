@@ -1,4 +1,4 @@
-module Kronor.SmartCsv.Notification (
+module SmartCsv.Notification (
     CompletionEmail (..),
     EnqueueMeta (..),
     defaultEnqueueMeta,

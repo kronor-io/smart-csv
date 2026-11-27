@@ -1,6 +1,6 @@
 {-# LANGUAGE CApiFFI #-}
 
-module Kronor.SmartCsv.Deflate
+module SmartCsv.Deflate
   ( SegmentEnd (..),
     crc32,
     deflateSegment,

@@ -1,4 +1,4 @@
-module Kronor.SmartCsv.Validation
+module SmartCsv.Validation
   ( validateGraphqlQueryBody,
     validateGraphqlQueryBodyAndGetRootField,
     validateQueryVariables,

@@ -12,8 +12,8 @@ import Data.Aeson qualified as Aeson
 import Data.Time (UTCTime)
 import Hasql.Statement (Statement)
 import Hasql.TH (maybeStatement, resultlessStatement, singletonStatement)
-import Kronor.SmartCsv.Query (GenericQuery (..))
 import RIO
+import SmartCsv.Query (GenericQuery (..))
 
 
 data GeneratedCsvPayload = GeneratedCsvPayload

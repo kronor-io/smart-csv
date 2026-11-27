@@ -1,4 +1,4 @@
-module Kronor.SmartCsv.ColumnConfig
+module SmartCsv.ColumnConfig
   ( ColumnConfig,
     ColumnSettings (..),
     ColumnKey (..),
@@ -25,7 +25,7 @@ data ColumnSettings = ColumnSettings
     header :: Maybe Text,
     dataPath :: Maybe Text,
     -- | The column prints a numeric scalar.  Not read from the request: it comes
-    -- from the GraphQL schema (see 'Kronor.SmartCsv.Schema'), because Hasura can
+    -- from the GraphQL schema (see 'SmartCsv.Schema'), because Hasura can
     -- send numbers as strings.
     numeric :: Bool,
     -- | Print the field as several columns, one per entry, in this order.  Each

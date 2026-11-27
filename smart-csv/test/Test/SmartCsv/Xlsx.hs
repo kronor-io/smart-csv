@@ -1,4 +1,4 @@
-module Test.Kronor.SmartCsv.Xlsx (tests, byHeader) where
+module Test.SmartCsv.Xlsx (tests, byHeader) where
 
 import Codec.Compression.Zlib.Raw qualified as Raw
 import Data.Aeson qualified as Aeson
@@ -10,11 +10,11 @@ import Data.List.NonEmpty (nonEmpty)
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as Text
 import Data.Vector qualified as Vector
-import Kronor.SmartCsv.ColumnConfig (ColumnConfig, ColumnKey (..), ColumnSettings (..), OutputColumn (..), defaultColumnSettings, outputColumns)
-import Kronor.SmartCsv.Deflate (SegmentEnd (..), crc32, deflateSegment)
-import Kronor.SmartCsv.Xlsx (SheetEntry (..), XlsxCell (..), appendRows, checkColumnCount, finishArchive, mkXlsxStyles, sheetNameFor, startArchive, xlsxRowBytes, xlsxify)
 import RIO
 import RIO.List (find, iterate)
+import SmartCsv.ColumnConfig (ColumnConfig, ColumnKey (..), ColumnSettings (..), OutputColumn (..), defaultColumnSettings, outputColumns)
+import SmartCsv.Deflate (SegmentEnd (..), crc32, deflateSegment)
+import SmartCsv.Xlsx (SheetEntry (..), XlsxCell (..), appendRows, checkColumnCount, finishArchive, mkXlsxStyles, sheetNameFor, startArchive, xlsxRowBytes, xlsxify)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
 
